@@ -60,3 +60,11 @@ After completing the installation steps below, any of the Jupyter notebooks can 
     5. `make`
     6. `sudo make install`
     7. `sudo ldconfig`
+
+9. Download and install [Unigen](https://github.com/meelgroup/unigen).
+   1.  `mkdir unigen`
+   2. `cd unigen`
+   3. Install their static binary from their [Github releases](https://github.com/meelgroup/unigen/releases/tag/release%2F2.7.0).
+   4. Place it inside your unigen folder
+   5. Make the binary executable, in wsl run `chmod +x unigen`
+   6. `ln -s <path_to_unigen/unigen ~/.local/bin/unigen`
