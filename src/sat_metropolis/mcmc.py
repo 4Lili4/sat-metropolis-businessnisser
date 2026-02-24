@@ -61,6 +61,15 @@ def sample_mh_trace_from_z3_model(backend: str,
             num_samples=num_samples,
             print_z3_model=print_z3_model
         )
+    elif backend == 'unigen':
+        samples = sat.get_samples_sat_unigen_problem(
+            z3_problem=z3_problem,
+            num_vars=num_vars,
+            num_bits=num_bits,
+            timeout=timeout_sampler,
+            num_samples=num_samples,
+            print_z3_model=print_z3_model
+    )
     time_sample_gen = time.time() - start_time_sample_gen
 
 
