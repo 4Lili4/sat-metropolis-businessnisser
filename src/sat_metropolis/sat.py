@@ -641,7 +641,7 @@ def save_dimacs_pyunigen(g: Goal) -> (int, dict):
 def execute_pyunigen(cnf_problem,
                    num_samples: int = 10000,
                    timeout: int = 1800
-                   ) -> None:
+                   ):
 
     """Executes cmsgen on the specified input file
     `input_filepath`. By default, it generates 10000 samples. The
@@ -660,7 +660,6 @@ def execute_pyunigen(cnf_problem,
         sampler.add_clause(literal)
     # .sample() returns: cells, hashes, samples
     _, _, samples = sampler.sample(num_samples)
-    print(samples)
     return samples
     # # Write the samples to output file
     # with open(output_filepath, "w") as f:
@@ -670,7 +669,11 @@ def execute_pyunigen(cnf_problem,
 def parse_pyunigen_samples(samples,
                          num_samples: int,
                          num_variables: int) -> list[list[bool]]:
-   
+
+
+    #samples = [int(int(l) >= 0) for l in ] ### [:-1]
+    samples = [[int(int(x) >= 0) for x in sublist] for sublist in samples]
+
     samples_numpy = np.array(samples, dtype=np.int_)
     if not ((num_samples, num_variables) == samples_numpy.shape):
         if samples_numpy.shape[1] != num_variables:
@@ -704,18 +707,6 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
     if print_z3_model:
         print(z3_problem)
 
-    CWD = os.getcwd()
-
-    UNIGEN_INPUT_DIR = 'unigen_input'
-    UNIGEN_INPUT_DIR_PATH = os.path.join(CWD, UNIGEN_INPUT_DIR)
-    os.mkdir(UNIGEN_INPUT_DIR_PATH) if not os.path.exists(UNIGEN_INPUT_DIR_PATH) else None
-
-    UNIGEN_INPUT_FILE = 'z3_problem.cnf'
-    UNIGEN_INPUT_FILEPATH = f'{UNIGEN_INPUT_DIR}/{UNIGEN_INPUT_FILE}'
-
-    UNIGEN_OUTPUT_FILE = 'unigen_samples.out'
-    UNIGEN_OUTPUT_FILEPATH = f'{UNIGEN_INPUT_DIR}/{UNIGEN_OUTPUT_FILE}'
-
     (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
     print(z3_problem_cnf)
     # UNIGEN sampling \o/
@@ -723,12 +714,12 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
     samples = execute_pyunigen(z3_problem_cnf,
                    num_samples=num_samples,
                    timeout=timeout)
-    print(samples)
+    # print(samples)
     # parsing UNIGEN samples
     print("Parsing unigen samples")
     parsed_samples = parse_pyunigen_samples(samples,
                                    num_samples, num_blasted_vars)
-
+    # print("parsed samples:", parsed_samples)
     # map spur samples to the corresponding Z3 variable
     map_variable_values = map_spur_samples_to_z3_vars(variables_number,
                                                       num_blasted_vars,
