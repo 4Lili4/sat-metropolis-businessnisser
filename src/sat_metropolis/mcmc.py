@@ -77,6 +77,15 @@ def sample_mh_trace_from_z3_model(backend: str,
             num_samples=num_samples,
             print_z3_model=print_z3_model
     )
+    elif backend == 'pyunigen':
+        samples = sat.get_samples_sat_pyunigen_problem(
+            z3_problem=z3_problem,
+            num_vars=num_vars,
+            num_bits=num_bits,
+            timeout=timeout_sampler,
+            num_samples=num_samples,
+            print_z3_model=print_z3_model
+    )
     time_sample_gen = time.time() - start_time_sample_gen
 
 
@@ -160,6 +169,9 @@ def sample_mh_trace(num_samples: int,
             s_prime: dict[str, int] = solver_samples[i+1]
             # 2. compute acceptance ratio (s[i] is the current state)
             alpha: float = f(s_prime)/f(s[i])
+            # print("fs_prime:", f(s_prime))
+            # print("fs_i:", f(s[i]))
+            # print("alpha:", alpha)
             # 3. draw a sample uniformly from the unit interval -> U(0,1)
             u: float = np.random.uniform(0, 1)
             # 4. decide whether you move to next state

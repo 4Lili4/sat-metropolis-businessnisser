@@ -215,6 +215,7 @@ def save_dimacs(g: Goal, output_filepath: str) -> (int, dict):
 
     with open(output_filepath, 'w') as file:
         for row in dimacs_format:
+            print(row)
             file.write(' '.join([str(item) for item in row]))
             file.write('\n')
     return (n_varibles, varibles_number)
@@ -532,27 +533,6 @@ def execute_unigen(input_filepath: str,
             f.write(" ".join(map(str, sample)) + "\n")
 
 
-def parse_pyunigen_samples(input: list[int],
-                         num_samples: int,
-                         num_variables: int) -> list[list[bool]]:
-    unigen_sample = input
-    samples_numpy = np.array(unigen_sample, dtype=np.int_)
-    if not ((num_samples, num_variables) == samples_numpy.shape):
-        if samples_numpy.shape[1] != num_variables:
-            print(samples_numpy.shape[1])
-            print(num_variables)
-            time.sleep(2)
-            raise RuntimeError("Number of variables mismatch")
-
-        if samples_numpy.shape[0] < num_samples:
-            raise RuntimeError("UniGen returned fewer samples than requested")
-
-        # If more samples than requested then we truncate (Unigen is weird)
-        samples_numpy = samples_numpy[:num_samples]
-                ###### raise RuntimeError(f'The number of samples or number of variables do not match.\n \
-                ###### unigen generated {samples_numpy.shape[0]} samples on {samples_numpy.shape[1]} variables, but you specified {num_samples} samples and {num_variables} variables')
-    return samples_numpy
-
 def parse_unigen_samples(input_dir: str,
                          input_file: str,
                          num_samples: int,
@@ -623,7 +603,7 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
     print("Parsing unigen samples")
     samples = parse_unigen_samples(UNIGEN_INPUT_DIR, UNIGEN_OUTPUT_FILE,
                                    num_samples, num_blasted_vars)
-
+    print(samples)
     # map spur samples to the corresponding Z3 variable
     map_variable_values = map_spur_samples_to_z3_vars(variables_number,
                                                       num_blasted_vars,
@@ -634,7 +614,7 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
                                                num_samples,
                                                num_vars,
                                                num_bits)
-    
+    print(solver_samples)
     TEST_FILEPATH = F'{UNIGEN_INPUT_DIR}/{'unigen_test.pkl'}'
     with open(TEST_FILEPATH, 'wb') as file:
         pickle.dump(solver_samples, file)
@@ -646,6 +626,67 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
     
 
 ## *********************************************************************************************** ##
+
+def save_dimacs_pyunigen(g: Goal) -> (int, dict):
+    # NOTE: We return n_variables because it is later used to parse
+    #       the output of spur.
+    #       Also, we return the map variables_number because we need
+    #       to map back the results from spur to its Z3 variables.
+
+    # NOTE: We use `convert_to_cnf_and_dimacs_simp`
+    (dimacs_format, n_varibles, varibles_number) = convert_to_cnf_and_dimacs_simp(g)
+
+    return (n_varibles, varibles_number), dimacs_format
+
+def execute_pyunigen(cnf_problem,
+                   num_samples: int = 10000,
+                   timeout: int = 1800
+                   ) -> None:
+
+    """Executes cmsgen on the specified input file
+    `input_filepath`. By default, it generates 10000 samples. The
+    samples are added to the file specified in `output_filepath`.
+
+    The function assumes that the spur executable is accessible
+    by calling `unigen`.
+
+    """
+    print("Test en hest 3") 
+    sampler = uni.Sampler()
+
+    literals = cnf_problem[1:]
+    literals = [[int(x) for x in sublist[:-1]] for sublist in literals]
+    for literal in literals:
+        sampler.add_clause(literal)
+    # .sample() returns: cells, hashes, samples
+    _, _, samples = sampler.sample(num_samples)
+    print(samples)
+    return samples
+    # # Write the samples to output file
+    # with open(output_filepath, "w") as f:
+    #     for sample in samples:
+    #         f.write(" ".join(map(str, sample)) + "\n")
+
+def parse_pyunigen_samples(samples,
+                         num_samples: int,
+                         num_variables: int) -> list[list[bool]]:
+   
+    samples_numpy = np.array(samples, dtype=np.int_)
+    if not ((num_samples, num_variables) == samples_numpy.shape):
+        if samples_numpy.shape[1] != num_variables:
+            print(samples_numpy.shape[1])
+            print(num_variables)
+            time.sleep(2)
+            raise RuntimeError("Number of variables mismatch")
+
+        if samples_numpy.shape[0] < num_samples:
+            raise RuntimeError("UniGen returned fewer samples than requested")
+
+        # If more samples than requested then we truncate (Unigen is weird)
+        samples_numpy = samples_numpy[:num_samples]
+                ###### raise RuntimeError(f'The number of samples or number of variables do not match.\n \
+                ###### unigen generated {samples_numpy.shape[0]} samples on {samples_numpy.shape[1]} variables, but you specified {num_samples} samples and {num_variables} variables')
+    return samples_numpy
 
 def get_samples_sat_pyunigen_problem(z3_problem: Goal,
                                    num_vars: int, # number of varibles unblasted
@@ -659,7 +700,7 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
 
     if sanity_check_problem and __check_goal(z3_problem) == unsat:
         raise RuntimeError('The problem you input is UNSAT')
-
+    
     if print_z3_model:
         print(z3_problem)
 
@@ -675,30 +716,29 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
     UNIGEN_OUTPUT_FILE = 'unigen_samples.out'
     UNIGEN_OUTPUT_FILEPATH = f'{UNIGEN_INPUT_DIR}/{UNIGEN_OUTPUT_FILE}'
 
-    (num_blasted_vars, variables_number) = save_dimacs(z3_problem,
-                                                       UNIGEN_INPUT_FILEPATH)
-
+    (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
+    print(z3_problem_cnf)
     # UNIGEN sampling \o/
     print("Executing Unigen sampler")
-    execute_unigen(UNIGEN_INPUT_FILEPATH,
-                   UNIGEN_OUTPUT_FILEPATH,
+    samples = execute_pyunigen(z3_problem_cnf,
                    num_samples=num_samples,
                    timeout=timeout)
-
+    print(samples)
     # parsing UNIGEN samples
     print("Parsing unigen samples")
-    samples = parse_unigen_samples(UNIGEN_INPUT_DIR, UNIGEN_OUTPUT_FILE,
+    parsed_samples = parse_pyunigen_samples(samples,
                                    num_samples, num_blasted_vars)
 
     # map spur samples to the corresponding Z3 variable
     map_variable_values = map_spur_samples_to_z3_vars(variables_number,
                                                       num_blasted_vars,
-                                                      samples)
+                                                      parsed_samples)
 
     # reverse bit-blasting
     solver_samples = reverse_bit_blasting_simp(map_variable_values,
                                                num_samples,
                                                num_vars,
                                                num_bits)
-
+    print("get_samples_sat_pyunigen_problem is done")
+    print(solver_samples)
     return solver_samples
