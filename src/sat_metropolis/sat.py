@@ -4,10 +4,19 @@ import math
 import random
 import numpy as np
 import re
-import os
+import os, sys
 from warnings import warn
+import time
+import pyunigen as uni
+import pickle
 
-from sat_metropolis import utils
+project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
+sys.path.append(project_root)
+
+import src.sat_metropolis.utils as utils
+
+# from utils import * 
+# import utils
 
 # NOTE: The function below creates a new variable for each bit in the
 #       bit-vector.  Then, it maps the correspoding variable of the
@@ -374,37 +383,6 @@ def reverse_bit_blasting_simp(variable_values: dict[str, list[bool]],
     return solver_samples
 
 
-def reverse_bit_blasting(variable_values: dict[str, list[bool]],
-                         num_samples: int,
-                         num_vars: int,
-                         num_bits: int) -> list[dict[str, int]]:
-
-    # DEPRECATED function
-    warn('This method is deprecated (and buggy). Please use the newer \
-    `reverse_bit_blasting_simp`. It has the same signature',
-         DeprecationWarning, stacklevel=2)
-
-    map_var_name_samples = {}
-    for i in range(num_vars):
-        var_name = f'x{i}'
-        map_var_name_samples[var_name] = np.zeros(num_samples, dtype=np.int_)
-        for j in range(num_bits):
-            bit_j_value = 2**j * variable_values[f'{var_name}{j}']
-            map_var_name_samples[var_name] += bit_j_value
-
-    # transform into format for the mcmc Metropolis-Hastings function
-    # NOTE: this step could be avoided if we modify slightly the
-    # mcmc.sample_mh_trace fucntion. In fact, mcmc.sample_mh_trace
-    # maps back the dictionary into the shape in
-    # `map_var_name_samples`
-    var_names = list(map_var_name_samples.keys())
-    # num_samples = len(map_var_name_samples[var_names[0]])
-    solver_samples = []
-    for i in range(num_samples):
-        sample = {v: map_var_name_samples[v][i] for v in var_names}
-        solver_samples.append(sample)
-    return solver_samples
-
 
 def __check_goal(z3_goal: Goal):
     """Helper funciton to easily check satisfiability of a Z3 Goal
@@ -535,15 +513,45 @@ def execute_unigen(input_filepath: str,
     by calling `unigen`.
 
     """
-    call(['unigen',                         # - unigen command
-                                            #   (hardcoded, it assumes
-                                            #   accessible for this
-                                            #   user)
-          '--samples', str(num_samples),    # - number of samples
-          '--sampleout', output_filepath,  # - output file path
-          input_filepath],                  # - input file path
-         timeout=timeout)  # timeout in seconds
+    print("Test en hest 3") 
+    sampler = uni.Sampler()
 
+    with open(input_filepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("c") or line.startswith("p"):
+                continue
+            literals = [int(x) for x in line.split() if x != "0"]
+            sampler.add_clause(literals)
+    # .sample() returns: cells, hashes, samples
+    _, _, samples = sampler.sample(num_samples)
+
+    # Write the samples to output file
+    with open(output_filepath, "w") as f:
+        for sample in samples:
+            f.write(" ".join(map(str, sample)) + "\n")
+
+
+def parse_pyunigen_samples(input: list[int],
+                         num_samples: int,
+                         num_variables: int) -> list[list[bool]]:
+    unigen_sample = input
+    samples_numpy = np.array(unigen_sample, dtype=np.int_)
+    if not ((num_samples, num_variables) == samples_numpy.shape):
+        if samples_numpy.shape[1] != num_variables:
+            print(samples_numpy.shape[1])
+            print(num_variables)
+            time.sleep(2)
+            raise RuntimeError("Number of variables mismatch")
+
+        if samples_numpy.shape[0] < num_samples:
+            raise RuntimeError("UniGen returned fewer samples than requested")
+
+        # If more samples than requested then we truncate (Unigen is weird)
+        samples_numpy = samples_numpy[:num_samples]
+                ###### raise RuntimeError(f'The number of samples or number of variables do not match.\n \
+                ###### unigen generated {samples_numpy.shape[0]} samples on {samples_numpy.shape[1]} variables, but you specified {num_samples} samples and {num_variables} variables')
+    return samples_numpy
 
 def parse_unigen_samples(input_dir: str,
                          input_file: str,
@@ -553,11 +561,14 @@ def parse_unigen_samples(input_dir: str,
     samples = []
     with open(unigen_samples_filepath, 'r') as file:
         for line in file:
-            sample = [int(int(l) >= 0) for l in line.split(' ')][:-1]
+            sample = [int(int(l) >= 0) for l in line.split(' ')] ### [:-1]
             samples.append(sample)
     samples_numpy = np.array(samples, dtype=np.int_)
     if not ((num_samples, num_variables) == samples_numpy.shape):
         if samples_numpy.shape[1] != num_variables:
+            print(samples_numpy.shape[1])
+            print(num_variables)
+            time.sleep(2)
             raise RuntimeError("Number of variables mismatch")
 
         if samples_numpy.shape[0] < num_samples:
@@ -623,6 +634,71 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
                                                num_samples,
                                                num_vars,
                                                num_bits)
+    
+    TEST_FILEPATH = F'{UNIGEN_INPUT_DIR}/{'unigen_test.pkl'}'
+    with open(TEST_FILEPATH, 'wb') as file:
+        pickle.dump(solver_samples, file)
+
+    # with open(TEST_FILEPATH, "wb") as f:
+    #     for sample in solver_samples:
+    #         f.write(" ".join(map(str, sample)) + "\n")
+    return solver_samples
+    
+
+## *********************************************************************************************** ##
+
+def get_samples_sat_pyunigen_problem(z3_problem: Goal,
+                                   num_vars: int, # number of varibles unblasted
+                                   num_bits: int, # number of bits of BitVectors
+                                                  # (assumption: all the same)
+                                   num_samples: int = 10000,
+                                   sanity_check_problem: bool = True,
+                                   sanity_check_samples: bool = False,
+                                   timeout: int = 1800,  # seconds
+                                   print_z3_model: bool = False):
+
+    if sanity_check_problem and __check_goal(z3_problem) == unsat:
+        raise RuntimeError('The problem you input is UNSAT')
+
+    if print_z3_model:
+        print(z3_problem)
+
+    CWD = os.getcwd()
+
+    UNIGEN_INPUT_DIR = 'unigen_input'
+    UNIGEN_INPUT_DIR_PATH = os.path.join(CWD, UNIGEN_INPUT_DIR)
+    os.mkdir(UNIGEN_INPUT_DIR_PATH) if not os.path.exists(UNIGEN_INPUT_DIR_PATH) else None
+
+    UNIGEN_INPUT_FILE = 'z3_problem.cnf'
+    UNIGEN_INPUT_FILEPATH = f'{UNIGEN_INPUT_DIR}/{UNIGEN_INPUT_FILE}'
+
+    UNIGEN_OUTPUT_FILE = 'unigen_samples.out'
+    UNIGEN_OUTPUT_FILEPATH = f'{UNIGEN_INPUT_DIR}/{UNIGEN_OUTPUT_FILE}'
+
+    (num_blasted_vars, variables_number) = save_dimacs(z3_problem,
+                                                       UNIGEN_INPUT_FILEPATH)
+
+    # UNIGEN sampling \o/
+    print("Executing Unigen sampler")
+    execute_unigen(UNIGEN_INPUT_FILEPATH,
+                   UNIGEN_OUTPUT_FILEPATH,
+                   num_samples=num_samples,
+                   timeout=timeout)
+
+    # parsing UNIGEN samples
+    print("Parsing unigen samples")
+    samples = parse_unigen_samples(UNIGEN_INPUT_DIR, UNIGEN_OUTPUT_FILE,
+                                   num_samples, num_blasted_vars)
+
+    # map spur samples to the corresponding Z3 variable
+    map_variable_values = map_spur_samples_to_z3_vars(variables_number,
+                                                      num_blasted_vars,
+                                                      samples)
+
+    # reverse bit-blasting
+    solver_samples = reverse_bit_blasting_simp(map_variable_values,
+                                               num_samples,
+                                               num_vars,
+                                               num_bits)
 
     return solver_samples
-

@@ -5,8 +5,13 @@ This module contains functions to quickly obtain the models we benchmark in expe
 from z3 import Goal, BitVec, ULE, Sum, Int, Solver
 import numpy as np
 import pandas as pd
+import os, sys
 
-from sat_metropolis import sat
+project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
+sys.path.append(project_root)
+
+# from sat_metropolis import sat
+import src.sat_metropolis.sat as sat
 
 # SAT Models
 

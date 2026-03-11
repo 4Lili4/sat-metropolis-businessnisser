@@ -1,7 +1,9 @@
 from subprocess import call
 from z3 import Solver
-import os
+import os, sys
 
+project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
+sys.path.append(project_root)
 
 def generate_smt2(solver: Solver) -> str:
     """

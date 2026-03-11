@@ -1,12 +1,19 @@
 import random
 import numpy as np
 import arviz as az
-import os
-from sat_metropolis import smt, sat
+import os, sys
 from z3 import Solver, Int, Sum, Goal, BitVec, ULE
 from typing import Callable
 import time
 import logging
+
+project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
+sys.path.append(project_root)
+
+# from sat_metropolis import smt, sat
+# import smt, sat
+import src.sat_metropolis.sat as sat
+import src.sat_metropolis.smt as smt
 
 
 def sample_mh_trace_from_z3_model(backend: str,
@@ -147,7 +154,7 @@ def sample_mh_trace(num_samples: int,
         np.random.shuffle(solver_samples)
         # take inital state from sample
         s.append(solver_samples[0])
-        # s_i: dict[str, int] = s_0
+        # s_i: dict[str, int] = s_0 
         for i in range(num_samples-1):
             # 1. draw a sample for candidate next state
             s_prime: dict[str, int] = solver_samples[i+1]
