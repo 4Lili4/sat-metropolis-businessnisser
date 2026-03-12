@@ -6,7 +6,8 @@ from z3 import Solver, Int, Sum, Goal, BitVec, ULE
 from typing import Callable
 import time
 import logging
-
+import matplotlib.pyplot as plt
+from collections import Counter
 project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
 sys.path.append(project_root)
 
@@ -87,6 +88,35 @@ def sample_mh_trace_from_z3_model(backend: str,
             print_z3_model=print_z3_model
     )
     time_sample_gen = time.time() - start_time_sample_gen
+
+    #plot samples
+
+
+    keys = list(samples[0].keys())
+    n = len(keys)
+
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
+
+    # make axes iterable when n == 1
+    if n == 1:
+        axes = [axes]
+
+    for ax, key in zip(axes, keys):
+        vals = [d[key] for d in samples]
+        c = Counter(vals)
+
+        total = sum(c.values())
+        normalized = {k: v / total for k, v in c.items()}
+
+        ax.bar(list(normalized.keys()), list(normalized.values()))
+        ax.set_title(key)
+        ax.set_ylabel("Probability")
+        ax.set_xlabel("Value")
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 
     # run MCMC using the samples from spur or megasampler
