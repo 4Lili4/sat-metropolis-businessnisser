@@ -1,0 +1,1 @@
+python diagonal_pairs_random_walk.py --num-samples 2000 --refresh-every 1 --D 1 
