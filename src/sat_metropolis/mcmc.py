@@ -19,9 +19,11 @@ import src.sat_metropolis.smt as smt
 
 def sample_mh_trace_from_z3_model(backend: str,
                                   z3_problem,
+                                  D: int = 1,
                                   num_vars: int = None,  # mandatory for spur/cmsgen
                                   num_bits: int = None,  # mandatory for spur/cmsgen
                                   num_samples: int = 10000,
+                                  num_iterations: int = 10000,
                                   num_chains: int = 4,
                                   timeout_sampler: int = 1800,  # seconds
                                   algo: str = 'MeGA',  # only for MegaSampler
@@ -87,6 +89,17 @@ def sample_mh_trace_from_z3_model(backend: str,
             num_samples=num_samples,
             print_z3_model=print_z3_model
     )
+    elif backend == 'inc_pyunigen':
+        samples = sat.get_conditional_incremental_samples_sat_pyunigen_problem(
+            z3_problem=z3_problem,
+            num_vars=num_vars,
+            num_bits=num_bits,
+            timeout=timeout_sampler,
+            num_samples=num_samples,
+            num_iterations=num_iterations,
+            print_z3_model=print_z3_model,
+            D=D
+    )    
     time_sample_gen = time.time() - start_time_sample_gen
 
     #plot samples
