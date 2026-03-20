@@ -1,5 +1,5 @@
 from subprocess import call
-from z3 import Goal, BitVecSort, Bool, And, BVAddNoOverflow, BVMulNoOverflow, BVSubNoUnderflow, Then, simplify, is_app_of, Z3_OP_NOT, Not, BoolRef, solve, unsat, sat, Solver
+from z3 import Goal, BitVecSort, Bool, And, BVAddNoOverflow, BVMulNoOverflow, BVSubNoUnderflow, Then, simplify, is_app_of, Z3_OP_NOT, Not, BoolRef, solve, unsat, sat, Solver, ULE, BitVec
 import math
 import random
 import numpy as np
@@ -9,6 +9,7 @@ from warnings import warn
 import time
 import pyunigen as uni
 import pickle
+import random
 
 project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
 sys.path.append(project_root)
@@ -506,31 +507,22 @@ def execute_unigen(input_filepath: str,
                    timeout: int = 1800
                    ) -> None:
 
-    """Executes cmsgen on the specified input file
+    """Executes unigen on the specified input file
     `input_filepath`. By default, it generates 10000 samples. The
     samples are added to the file specified in `output_filepath`.
 
     The function assumes that the spur executable is accessible
-    by calling `unigen`.
+    by calling `cmsgen`.
 
     """
-    print("Test en hest 3") 
-    sampler = uni.Sampler()
-
-    with open(input_filepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("c") or line.startswith("p"):
-                continue
-            literals = [int(x) for x in line.split() if x != "0"]
-            sampler.add_clause(literals)
-    # .sample() returns: cells, hashes, samples
-    _, _, samples = sampler.sample(num_samples)
-
-    # Write the samples to output file
-    with open(output_filepath, "w") as f:
-        for sample in samples:
-            f.write(" ".join(map(str, sample)) + "\n")
+    call(['unigen',                         # - cmsgen command
+                                            #   (hardcoded, it assumes
+                                            #   accessible for this
+                                            #   user)
+          '--samples', str(num_samples),    # - number of samples
+          '--sampleout', output_filepath,  # - output file path
+          input_filepath],                  # - input file path
+         timeout=timeout)  # timeout in seconds
 
 
 def parse_unigen_samples(input_dir: str,
@@ -541,7 +533,7 @@ def parse_unigen_samples(input_dir: str,
     samples = []
     with open(unigen_samples_filepath, 'r') as file:
         for line in file:
-            sample = [int(int(l) >= 0) for l in line.split(' ')] ### [:-1]
+            sample = [int(int(l) >= 0) for l in line.split(' ')][:-1]
             samples.append(sample)
     samples_numpy = np.array(samples, dtype=np.int_)
     if not ((num_samples, num_variables) == samples_numpy.shape):
@@ -615,9 +607,9 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
                                                num_vars,
                                                num_bits)
     print(solver_samples)
-    TEST_FILEPATH = F'{UNIGEN_INPUT_DIR}/{'unigen_test.pkl'}'
-    with open(TEST_FILEPATH, 'wb') as file:
-        pickle.dump(solver_samples, file)
+    # TEST_FILEPATH = F'{UNIGEN_INPUT_DIR}/{'unigen_test.pkl'}'
+    # with open(TEST_FILEPATH, 'wb') as file:
+    #     pickle.dump(solver_samples, file)
 
     # with open(TEST_FILEPATH, "wb") as f:
     #     for sample in solver_samples:
@@ -733,3 +725,328 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
     print("get_samples_sat_pyunigen_problem is done")
     print(solver_samples)
     return solver_samples
+
+
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+
+# import random
+
+# def build_variable_permutation(clauses, rng):
+#     """
+#     Build a random bijection old_var -> new_var for all variables used in clauses.
+#     clauses: list[list[int]]
+#     """
+#     vars_used = sorted({abs(lit) for clause in clauses for lit in clause})
+#     shuffled = vars_used[:]
+#     rng.shuffle(shuffled)
+
+#     old_to_new = dict(zip(vars_used, shuffled))
+#     new_to_old = {new: old for old, new in old_to_new.items()}
+#     return old_to_new, new_to_old
+
+# def remap_clauses(clauses, old_to_new):
+#     """
+#     Apply variable renaming to CNF clauses.
+#     Keeps sign, only renames variable index.
+#     """
+#     remapped = []
+#     for clause in clauses:
+#         new_clause = []
+#         for lit in clause:
+#             v = abs(lit)
+#             sign = 1 if lit > 0 else -1
+#             new_clause.append(sign * old_to_new[v])
+#         remapped.append(new_clause)
+#     return remapped
+
+
+# def invert_sample(sample, new_to_old):
+#     """
+#     Convert a sample from permuted variable ids back to original ids.
+
+#     Assumes sample is something like [1, -2, 3, ...]
+#     meaning x1=True, x2=False, x3=True in the permuted space.
+#     """
+#     restored = []
+#     for lit in sample:
+#         v = abs(lit)
+#         sign = 1 if lit > 0 else -1
+#         restored.append(sign * new_to_old[v])
+
+#     # optional: sort by original variable id for readability/stability
+#     restored.sort(key=lambda x: abs(x))
+#     return restored
+
+
+# def execute_pyunigen_incremental(cnf_problem, num_samples, random_seed: int):
+#     print("Test en hest 3")
+
+#     rng = random.Random(random_seed)
+
+#     # Parse DIMACS-like CNF lines: skip header line, remove trailing 0
+#     clauses = cnf_problem[1:]
+#     clauses = [[int(x) for x in sublist[:-1]] for sublist in clauses]
+
+#     # Build random variable renaming
+#     old_to_new, new_to_old = build_variable_permutation(clauses, rng)
+
+#     # Remap CNF
+#     permuted_clauses = remap_clauses(clauses, old_to_new)
+
+#     sampler = uni.Sampler()
+#     for clause in permuted_clauses:
+#         sampler.add_clause(clause)
+
+#     # Sample in permuted space
+#     _, _, samples = sampler.sample(num_samples)
+#     print("raw permuted samples:", samples)
+
+#     # Map samples back to original variable ids
+#     restored_samples = [invert_sample(sample, new_to_old) for sample in samples]
+#     print("restored samples:", restored_samples)
+
+#     return restored_samples  #, old_to_new, new_to_old
+
+
+# # def execute_pyunigen_incremental(cnf_problem,
+# #                                  num_samples,
+# #                     random_seed: int,
+# #                    ):
+
+# #     print("Test en hest 3") 
+# #     sampler = uni.Sampler()
+    
+# #     literals = cnf_problem[1:]
+# #     literals = [[int(x) for x in sublist[:-1]] for sublist in literals]
+
+# #     for literal in literals:
+# #         sampler.add_clause(literal)
+# #     # .sample() returns: cells, hashes, samples
+# #     _, _, samples = sampler.sample(num_samples)
+# #     print("samples:", samples)
+# #     return samples
+
+import random
+
+def permute_problem(clauses, rng, sampling_set=None, decode=None):
+    """
+    Permute variable IDs in the CNF, shuffle clause order,
+    and optionally remap sampling_set and decode.
+
+    clauses: list[list[int]]
+    sampling_set: list[int] | None
+    decode: dict[int, Any] | None
+
+    Returns:
+        permuted_clauses, permuted_sampling_set, permuted_decode, mp
+    """
+    # If no sampling_set is given, use all variables appearing in clauses
+    if sampling_set is None:
+        sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
+
+    old_vars = sampling_set[:]
+    new_vars = sampling_set[:]
+    rng.shuffle(new_vars)
+
+    mp = dict(zip(old_vars, new_vars))
+
+    def remap_lit(signed_lit):
+        var = abs(signed_lit)
+        mapped = mp[var]
+        return mapped if signed_lit > 0 else -mapped
+
+    permuted_clauses = [[remap_lit(lit) for lit in clause] for clause in clauses]
+    rng.shuffle(permuted_clauses)
+
+    permuted_sampling_set = [mp[v] for v in sampling_set]
+
+    if decode is not None:
+        permuted_decode = {mp[v]: decode[v] for v in sampling_set}
+    else:
+        # identity-style decode: variable k maps back to original variable id
+        permuted_decode = {mp[v]: v for v in sampling_set}
+
+    return permuted_clauses, permuted_sampling_set, permuted_decode, mp
+
+
+def call_sample_once(sampler, sampling_set):
+    """
+    Try a few pyunigen calling conventions.
+    """
+    errors = []
+
+    for mode in ("kw_num_sampling", "pos_num_sampling", "pos_num"):
+        try:
+            if mode == "kw_num_sampling":
+                return sampler.sample(num=1, sampling_set=sampling_set)
+            if mode == "pos_num_sampling":
+                return sampler.sample(1, sampling_set)
+            return sampler.sample(1)
+        except Exception as e:
+            errors.append(f"{mode}: {repr(e)}")
+
+    raise RuntimeError("Could not call pyunigen successfully.\n" + "\n".join(errors))
+
+
+def invert_sample_with_decode(sample_lits, permuted_decode):
+    """
+    Convert a sample from permuted variable space back to original variable ids.
+
+    If permuted_decode was built as {permuted_var: original_var},
+    then a positive permuted literal means original_var=True,
+    and a negative permuted literal means original_var=False.
+    """
+    restored = []
+    for lit in sample_lits:
+        original_var = permuted_decode[abs(lit)]
+        restored.append(original_var if lit > 0 else -original_var)
+
+    restored.sort(key=lambda x: abs(x))
+    return restored
+
+
+def execute_pyunigen_incremental(cnf_problem, num_samples):
+    print("Test en hest 3")
+
+    rng = random.Random()
+
+    # Parse DIMACS-like structure:
+    # assumes cnf_problem[1:] are clauses and each clause ends with trailing 0
+    clauses = cnf_problem[1:]
+    clauses = [[int(x) for x in sublist[:-1]] for sublist in clauses]
+
+    # Build sampling set from variables actually used
+    sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
+
+    # Permute exactly like your working example
+    permuted_clauses, permuted_sampling_set, permuted_decode, _ = permute_problem(
+        clauses,
+        rng,
+        sampling_set=sampling_set,
+        decode=None,
+    )
+
+    sampler = uni.Sampler()
+    for clause in permuted_clauses:
+        sampler.add_clause(clause)
+
+    result = call_sample_once(sampler, permuted_sampling_set)
+
+    if isinstance(result, tuple) and len(result) == 3:
+        _, _, samples = result
+    else:
+        samples = result
+
+    if not samples:
+        raise RuntimeError("PyUniGen returned no sample.")
+
+    #print("raw permuted samples:", samples)
+
+    restored_samples = [
+        invert_sample_with_decode(sample, permuted_decode)
+        for sample in samples
+    ]
+
+    #print("restored samples:", restored_samples)
+    return restored_samples
+
+
+
+def window_clauses(solver_sample, g: Goal, num_bits, num_vars, D):
+    """Restrict vars for next sample to stay within D of the current state."""
+    
+    var_list = [BitVec(f'x{i}', num_bits) for i in range(num_vars)]
+    x = var_list
+    keys = list(solver_sample[0].keys())
+    values = list(solver_sample[0].values())
+    
+
+    for i in range(num_vars):
+        g.add(ULE(int(values[i]) - D, x[i]))
+        g.add(ULE(x[i], int(values[i]) + D))
+
+    return g
+
+
+def get_conditional_incremental_samples_sat_pyunigen_problem(z3_problem: Goal,
+                                   num_vars: int, # number of varibles unblasted
+                                   num_bits: int, # number of bits of BitVectors
+                                                  # (assumption: all the same)
+                                   num_samples: int = 1,
+                                   num_iterations: int = 10000,
+                                   sanity_check_problem: bool = True,
+                                   sanity_check_samples: bool = False,
+                                   timeout: int = 1800,  # seconds
+                                   print_z3_model: bool = False,
+                                   D: int = 1):
+
+    if sanity_check_problem and __check_goal(z3_problem) == unsat:
+        raise RuntimeError('The problem you input is UNSAT')
+    
+    if print_z3_model:
+        print(z3_problem)
+
+    conditioned_z3 = None
+    
+    trace = []
+
+    for i in range(num_iterations):
+        if conditioned_z3 == None:
+            (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
+        else:
+            (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(conditioned_z3)
+        print(z3_problem_cnf)
+        # UNIGEN sampling \o/
+        #print("num_samples:", num_samples)
+        #print("Executing Unigen sampler")
+        # Temp rng seed
+        samples = execute_pyunigen_incremental(z3_problem_cnf, num_samples=num_samples)
+        #print("num_samples:", num_samples)
+        #print(samples)
+        # parsing UNIGEN samples
+        #print("Parsing unigen samples")
+        parsed_samples = parse_pyunigen_samples(samples,num_variables=num_blasted_vars,
+                                    num_samples=num_samples)
+        #print("num_samples:", num_samples)
+        # print("parsed samples:", parsed_samples)
+        # map spur samples to the corresponding Z3 variable
+        map_variable_values = map_spur_samples_to_z3_vars(variables_number,
+                                                        num_blasted_vars,
+                                                        parsed_samples)
+        #print("num_samples:", num_samples)
+        # reverse bit-blasting
+        solver_samples = reverse_bit_blasting_simp(map_variable_values,
+                                                num_vars=num_vars,
+                                                num_bits=num_bits,
+                                                num_samples=num_samples)
+        #print("num_samples:", num_samples)
+        #print(solver_samples)
+        conditioned_z3 = window_clauses(solver_samples, z3_problem, num_bits=num_bits, num_vars=num_vars, D=D)
+        #print("num_samples:", num_samples)
+        trace.append(solver_samples)
+        #print("next sample")
+    print("get_samples_sat_pyunigen_problem is done")
+    print(trace)
+    return trace
+    
+
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+#####################################################################################################################
+
+
+
+
+

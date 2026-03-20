@@ -15,6 +15,23 @@ import src.sat_metropolis.sat as sat
 
 # SAT Models
 
+def get_diagonal_sat(num_bits: int = 5,
+                     num_vars: int = 2) -> tuple[Goal, int, int]:
+    var_list = [BitVec(f'x{i}', num_bits) for i in range(num_vars)]
+    x = var_list
+    g = Goal()
+    sat.add_bool_vars_to_goal(g, var_list)
+    g.add(sat.addition_does_not_overflow([x[0], x[1]]))  # important
+    g.add(ULE(0, x[0]))
+    g.add(ULE(x[0], 10))
+    g.add(ULE(0, x[1]))
+    g.add(ULE(x[1], 10))
+
+    g.add(x[0] + x[1] == 11)
+
+    return (g, num_bits, num_vars)
+
+
 def get_triangle_sat(num_bits: int = 4,
                      num_vars: int = 3) -> tuple[Goal, int, int]:
     var_list = [BitVec(f'x{i}', num_bits) for i in range(num_vars)]
