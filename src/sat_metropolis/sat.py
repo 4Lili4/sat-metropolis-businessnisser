@@ -1042,40 +1042,88 @@ def get_conditional_incremental_samples_sat_pyunigen_problem(z3_problem: Goal,
     conditioned_z3 = None
     
     trace = []
+    base_expr = z3_problem.as_expr()
 
     for i in range(num_iterations):
         print(f"Getting sample {i}")
-        if conditioned_z3 == None:
-            (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
-        else:
-            (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(conditioned_z3)
-        # UNIGEN sampling \o/
 
-        # Temp rng seed
+        current_goal = Goal()
+        current_goal.add(base_expr)
+
+        if i > 0:
+            current_goal = window_clauses(
+                solver_sample=solver_samples,
+                g=current_goal,
+                num_bits=num_bits,
+                num_vars=num_vars,
+                D=D
+            )
+
+        (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(current_goal)
+
         samples = execute_pyunigen_incremental(z3_problem_cnf, num_samples=num_samples)
 
-        # parsing UNIGEN samples
-        parsed_samples = parse_pyunigen_samples_incremental(samples,num_variables=num_blasted_vars,
-                                    num_samples=num_samples)
- 
-        # map spur samples to the corresponding Z3 variable
-        map_variable_values = map_spur_samples_to_z3_vars(variables_number,
-                                                        num_blasted_vars,
-                                                        parsed_samples)
+        parsed_samples = parse_pyunigen_samples_incremental(
+            samples,
+            num_variables=num_blasted_vars,
+            num_samples=num_samples
+        )
 
-        # reverse bit-blasting
-        solver_samples = reverse_bit_blasting_simp(map_variable_values,
-                                                num_vars=num_vars,
-                                                num_bits=num_bits,
-                                                num_samples=num_samples)
- 
-        conditioned_z3 = window_clauses(solver_sample=solver_samples, g=z3_problem, num_bits=num_bits, num_vars=num_vars, D=D)
- 
+        map_variable_values = map_spur_samples_to_z3_vars(
+            variables_number,
+            num_blasted_vars,
+            parsed_samples
+        )
+
+        solver_samples = reverse_bit_blasting_simp(
+            map_variable_values,
+            num_vars=num_vars,
+            num_bits=num_bits,
+            num_samples=num_samples
+        )
+
         trace.append(solver_samples[0])
-   
     print("get_samples_sat_pyunigen_problem is done")
     print(trace)
     return trace
+    
+
+    # for i in range(num_iterations):
+    #     print(f"Getting sample {i}")
+    #     if conditioned_z3 == None:
+    #         (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
+    #     else:
+    #         (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(conditioned_z3)
+    #     # UNIGEN sampling \o/
+
+    #     # Temp rng seed
+    #     samples = execute_pyunigen_incremental(z3_problem_cnf, num_samples=num_samples)
+
+    #     # parsing UNIGEN samples
+    #     parsed_samples = parse_pyunigen_samples_incremental(samples,num_variables=num_blasted_vars,
+    #                                 num_samples=num_samples)
+ 
+    #     # map spur samples to the corresponding Z3 variable
+    #     map_variable_values = map_spur_samples_to_z3_vars(variables_number,
+    #                                                     num_blasted_vars,
+    #                                                     parsed_samples)
+
+    #     # reverse bit-blasting
+    #     solver_samples = reverse_bit_blasting_simp(map_variable_values,
+    #                                             num_vars=num_vars,
+    #                                             num_bits=num_bits,
+    #                                             num_samples=num_samples)
+ 
+    #     conditioned_z3 = window_clauses(solver_sample=solver_samples, g=z3_problem, num_bits=num_bits, num_vars=num_vars, D=D)
+ 
+    #     trace.append(solver_samples[0])
+   
+    # print("get_samples_sat_pyunigen_problem is done")
+    # print(trace)
+    # return trace
+
+
+    
     
 
 #####################################################################################################################
