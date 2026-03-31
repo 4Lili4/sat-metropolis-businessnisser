@@ -156,7 +156,7 @@ def __get_z3_model_from_conf_matrix_sat(num_bits: int,
     for i in range(len(yprime)):
         vars_ = [x[j] for j in range(num_vars) if Aprime[i][j] == 1]
         g.add(sat.addition_does_not_overflow(vars_))
-        g.add(Sum(vars_) == yprime[i])
+        g.add(Sum(vars_) == yprime[i]*1.0)
 
     for i in range(num_vars):
         g.add(ULE(0, x[i]))
@@ -228,7 +228,7 @@ def get_haplotypes_sat(genotypes: np.ndarray,  # size num_genotypes x
     for i in range(num_genotypes):
         # iterate over all bits of the BitVec
         for j in range(bits_per_haplotype):
-            g.add(x[i*10+j] + x[i*10+j+5] == genotypes[i][j])
+            g.add(x[i*10+j] + x[i*10+j+5] == genotypes[i][j]*1.0)
 
     return (g, num_bits, num_vars)
 
@@ -323,7 +323,7 @@ def __get_z3_model_from_conf_matrix_smt(max_int: int,
 
     for i in range(len(y)):
         vars_ = [x[j] for j in range(num_vars) if A[i][j] == 1]  # alternative
-        s.add(Sum(vars_) == y[i])
+        s.add(Sum(vars_) == y[i]*1.0)
 
     return (s, num_vars)
 
@@ -379,7 +379,6 @@ def get_haplotypes_smt(genotypes: np.ndarray,  # size num_genotypes x
     # x = var_list
     s = Solver()
 
-
     # Add contraints
     for i in range(num_vars):
         s.add(0 <= x[i])
@@ -389,7 +388,7 @@ def get_haplotypes_smt(genotypes: np.ndarray,  # size num_genotypes x
     for i in range(num_genotypes):
         # iterate over all bits of the BitVec
         for j in range(bits_per_haplotype):
-            s.add(x[i*10+j] + x[i*10+j+5] == genotypes[i][j])
+            s.add(x[i*10+j] + x[i*10+j+5] == genotypes[i][j]*1.0)
 
     return (s, num_vars)
 
