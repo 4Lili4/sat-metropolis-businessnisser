@@ -108,8 +108,8 @@ def sample_mh_trace_from_z3_model(backend: str,
             num_vars=num_vars,
             num_bits=num_bits,
             D=D,
-            num_samples=parallel_samples,
-            num_iterations=num_iterations,
+            parallel_samples=parallel_samples,
+            num_samples=num_samples,
             sanity_check_problem=True,
             print_z3_model=print_z3_model
     )

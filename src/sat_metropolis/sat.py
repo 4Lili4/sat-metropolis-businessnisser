@@ -1442,9 +1442,9 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
         num_vars: int,
         num_bits: int,
         D: int,
-        num_samples: int = 1,
-        num_iterations: int = 10000,
+        num_samples: int = 10000,
         sanity_check_problem: bool = True,
+        parallel_samples: int = 1,
         sanity_check_samples: bool = False,
         timeout: int = 1800,
         print_z3_model: bool = False,
@@ -1470,7 +1470,7 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
     trace = []
     solver_samples = None
 
-    for i in range(num_iterations):
+    for i in range(num_samples):
         print(f"Getting sample {i}")
 
         if i == 0:
@@ -1496,7 +1496,7 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
         solver_samples = sample_cached_pyunigen_problem(
             compiled_problem=compiled,
             extra_clauses=extra_clauses,
-            num_samples=num_samples
+            num_samples=parallel_samples
         )
         
         random_idx = random.randrange(len(solver_samples))
