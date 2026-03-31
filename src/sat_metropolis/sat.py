@@ -1137,16 +1137,148 @@ def encode_window_clauses_from_values(current_values: list[int],
 # Mapping from your variables_number structure
 # =========================================================
 
+# def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
+#     """
+#     Build:
+#         bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
+#     in LSB-first order.
+
+#     Expected names:
+#         x00, x01, ..., x14
+#     Ignore all k!N variables.
+#     """
+#     bit_map = {i: [None] * num_bits for i in range(num_vars)}
+
+#     for dimacs_id, z3var in variables_number.items():
+#         name = str(z3var)
+
+#         if not name.startswith("x"):
+#             continue
+
+#         digits = name[1:]
+
+#         # Your current naming scheme
+#         if len(digits) != 2:
+#             continue
+
+#         var_idx = int(digits[0])
+#         bit_idx = int(digits[1])
+
+#         if 0 <= var_idx < num_vars and 0 <= bit_idx < num_bits:
+#             if bit_map[var_idx][bit_idx] is not None:
+#                 raise RuntimeError(
+#                     f"Duplicate DIMACS mapping for x{var_idx} bit {bit_idx}: "
+#                     f"{bit_map[var_idx][bit_idx]} and {dimacs_id}"
+#                 )
+#             bit_map[var_idx][bit_idx] = int(dimacs_id)
+
+#     missing = [
+#         (i, b)
+#         for i in range(num_vars)
+#         for b in range(num_bits)
+#         if bit_map[i][b] is None
+#     ]
+#     if missing:
+#         raise RuntimeError(
+#             f"Missing x-bit DIMACS ids in variables_number: {missing}"
+#         )
+
+#     return bit_map
+
+# def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
+#     """
+#     Build:
+#         bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
+#     in LSB-first order.
+
+#     Supports names like:
+#         x00, x01, ..., x98, x100, x101, ..., x718, etc.
+
+#     Interpretation:
+#         x<var_idx><bit_idx>
+
+#     where bit_idx must be in [0, num_bits-1], and var_idx must be in [0, num_vars-1].
+
+#     All non-x variables (e.g. k!123) are ignored.
+#     """
+#     bit_map = {i: [None] * num_bits for i in range(num_vars)}
+
+#     for dimacs_id, z3var in variables_number.items():
+#         name = str(z3var)
+
+#         if not name.startswith("x"):
+#             continue
+
+#         digits = name[1:]
+#         matches = []
+
+#         # Try every split: digits[:split] = var_idx, digits[split:] = bit_idx
+#         for split in range(1, len(digits)):
+#             var_part = digits[:split]
+#             bit_part = digits[split:]
+
+#             # avoid weird leading-empty pieces
+#             if not var_part or not bit_part:
+#                 continue
+
+#             var_idx = int(var_part)
+#             bit_idx = int(bit_part)
+
+#             if 0 <= var_idx < num_vars and 0 <= bit_idx < num_bits:
+#                 matches.append((var_idx, bit_idx))
+
+#         if len(matches) == 0:
+#             continue
+
+#         if len(matches) > 1:
+#             raise RuntimeError(
+#                 f"Ambiguous x-variable name {name}: possible parses = {matches}. "
+#                 f"Need a more specific naming convention."
+#             )
+
+#         var_idx, bit_idx = matches[0]
+
+#         if bit_map[var_idx][bit_idx] is not None:
+#             raise RuntimeError(
+#                 f"Duplicate DIMACS mapping for x{var_idx} bit {bit_idx}: "
+#                 f"{bit_map[var_idx][bit_idx]} and {dimacs_id}"
+#             )
+
+#         bit_map[var_idx][bit_idx] = int(dimacs_id)
+
+#     missing = [
+#         (i, b)
+#         for i in range(num_vars)
+#         for b in range(num_bits)
+#         if bit_map[i][b] is None
+#     ]
+
+#     if missing:
+#         raise RuntimeError(
+#             f"Missing x-bit DIMACS ids in variables_number: {missing}"
+#         )
+
+#     return bit_map
+
+
 def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
     """
     Build:
         bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
     in LSB-first order.
 
-    Expected names:
-        x00, x01, ..., x14
-    Ignore all k!N variables.
+    Works for current naming scheme:
+        x00, x01, ..., x98, x100, x101, ..., x718, etc.
+
+    Assumption:
+        num_bits <= 10, so bit index is one decimal digit.
     """
+    if num_bits > 10:
+        raise RuntimeError(
+            "Current extractor assumes num_bits <= 10. "
+            "For larger bit-widths, use a separator-based naming scheme."
+        )
+
     bit_map = {i: [None] * num_bits for i in range(num_vars)}
 
     for dimacs_id, z3var in variables_number.items():
@@ -1157,12 +1289,15 @@ def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
 
         digits = name[1:]
 
-        # Your current naming scheme
-        if len(digits) != 2:
+        # Need at least one digit for var index and one for bit index
+        if len(digits) < 2:
             continue
 
-        var_idx = int(digits[0])
-        bit_idx = int(digits[1])
+        var_part = digits[:-1]
+        bit_part = digits[-1]
+
+        var_idx = int(var_part)
+        bit_idx = int(bit_part)
 
         if 0 <= var_idx < num_vars and 0 <= bit_idx < num_bits:
             if bit_map[var_idx][bit_idx] is not None:
@@ -1178,14 +1313,13 @@ def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
         for b in range(num_bits)
         if bit_map[i][b] is None
     ]
+
     if missing:
         raise RuntimeError(
             f"Missing x-bit DIMACS ids in variables_number: {missing}"
         )
 
     return bit_map
-
-
 # =========================================================
 # Compile base once
 # =========================================================
