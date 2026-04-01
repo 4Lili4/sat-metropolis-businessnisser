@@ -11,6 +11,7 @@ import time
 import pyunigen as uni
 import pickle
 import random
+import pycmsgen as cms
 
 project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
 sys.path.append(project_root)
@@ -659,7 +660,7 @@ def execute_pyunigen(cnf_problem,
     #     for sample in samples:
     #         f.write(" ".join(map(str, sample)) + "\n")
 
-def parse_pyunigen_samples(samples,
+def parse_samples(samples,
                          num_samples: int,
                          num_variables: int) -> list[list[bool]]:
 
@@ -684,7 +685,7 @@ def parse_pyunigen_samples(samples,
                 ###### unigen generated {samples_numpy.shape[0]} samples on {samples_numpy.shape[1]} variables, but you specified {num_samples} samples and {num_variables} variables')
     return samples_numpy
 
-def get_samples_sat_pyunigen_problem(z3_problem: Goal,
+def get_samples_sat_problem(z3_problem: Goal,
                                    num_vars: int, # number of varibles unblasted
                                    num_bits: int, # number of bits of BitVectors
                                                   # (assumption: all the same)
@@ -710,7 +711,7 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
     # print(samples)
     # parsing UNIGEN samples
     print("Parsing unigen samples")
-    parsed_samples = parse_pyunigen_samples(samples,
+    parsed_samples = parse_samples(samples,
                                    num_samples, num_blasted_vars)
     # print("parsed samples:", parsed_samples)
     # map spur samples to the corresponding Z3 variable
@@ -723,7 +724,7 @@ def get_samples_sat_pyunigen_problem(z3_problem: Goal,
                                                num_samples,
                                                num_vars,
                                                num_bits)
-    print("get_samples_sat_pyunigen_problem is done")
+    print("get_samples_sat_problem is done")
     print(solver_samples)
     return solver_samples
 
@@ -804,7 +805,7 @@ def permute_problem(clauses, rng, sampling_set=None, decode=None):
 
 #     raise RuntimeError("Could not call pyunigen successfully.\n" + "\n".join(errors))
 
-def call_sample(sampler, sampling_set, num_samples):
+def call_sample_pyunigen(sampler, sampling_set, num_samples):
     """
     Call pyunigen once, requesting num_samples samples.
     """
@@ -823,6 +824,19 @@ def call_sample(sampler, sampling_set, num_samples):
     raise RuntimeError("Could not call pyunigen successfully.\n" + "\n".join(errors))
 
 
+def call_sample_pycmsgen(clauses, sampling_set, num_samples=1, rng=None):
+    rng = rng or random.Random()
+    out = []
+    for _ in range(num_samples):
+        s = cms.Solver(seed=rng.randrange(1, 2**31))
+        for c in clauses:
+            s.add_clause(c)
+        sat, model = s.solve()
+        if sat is not True:
+            raise RuntimeError(f"CMSGen did not return SAT: {sat}")
+        out.append([v if model[v] else -v for v in sampling_set])
+    return out
+
 def invert_sample_with_decode(sample_lits, permuted_decode):
     """
     Convert a sample from permuted variable space back to original variable ids.
@@ -836,7 +850,7 @@ def invert_sample_with_decode(sample_lits, permuted_decode):
     return restored
 
 
-# def execute_pyunigen_on_clauses(clauses, num_samples=1, rng=None):
+# def execute_on_clauses(clauses, num_samples=1, rng=None):
 #     """
 #     Run PyUniGen on an in-memory CNF clause list.
 
@@ -884,7 +898,7 @@ def invert_sample_with_decode(sample_lits, permuted_decode):
 
 #     return all_restored[:num_samples]
 
-def execute_pyunigen_on_clauses(clauses, num_samples=1, rng=None):
+def execute_on_clauses(backend,clauses, num_samples=1, rng=None):
     """
     Run PyUniGen on an in-memory CNF clause list.
 
@@ -903,12 +917,21 @@ def execute_pyunigen_on_clauses(clauses, num_samples=1, rng=None):
         sampling_set=sampling_set,
         decode=None,
     )
-
-    sampler = uni.Sampler()
-    for clause in permuted_clauses:
-        sampler.add_clause(clause)
-
-    result = call_sample(sampler, permuted_sampling_set, num_samples=num_samples)
+    t0 = time.perf_counter()   
+    if backend == "pyunigen":
+        sampler = uni.Sampler()
+        for clause in permuted_clauses:
+            sampler.add_clause(clause)
+        result = call_sample_pyunigen(sampler, permuted_sampling_set, num_samples=num_samples)           
+     
+    elif backend == "pycmsgen":
+        result = call_sample_pycmsgen(
+            permuted_clauses,
+            permuted_sampling_set,
+            num_samples=num_samples,
+            rng=rng,
+        )
+    elapsed = time.perf_counter() - t0
 
     if isinstance(result, tuple) and len(result) == 3:
         _, _, samples = result
@@ -929,9 +952,9 @@ def execute_pyunigen_on_clauses(clauses, num_samples=1, rng=None):
             f"{len(restored_samples)} < {num_samples}"
         )
 
-    return restored_samples[:num_samples]
+    return restored_samples[:num_samples], elapsed
 
-def parse_pyunigen_samples_incremental(samples,
+def parse_samples_incremental(samples,
                                        num_samples: int,
                                        num_variables: int):
     """
@@ -1324,7 +1347,7 @@ def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
 # Compile base once
 # =========================================================
 
-def compile_base_pyunigen_problem(z3_problem: Goal,
+def compile_base_problem(z3_problem: Goal,
                                   num_vars: int,
                                   num_bits: int,
                                   sanity_check_problem: bool = True):
@@ -1370,7 +1393,7 @@ def compile_base_pyunigen_problem(z3_problem: Goal,
 # Sample from cached base + extra clauses with PyUniGen
 # =========================================================
 
-def sample_cached_pyunigen_problem(compiled_problem: dict,
+def sample_cached_problem(backend: str, compiled_problem: dict,
                                    extra_clauses: list[list[int]],
                                    num_samples: int):
     """
@@ -1383,12 +1406,13 @@ def sample_cached_pyunigen_problem(compiled_problem: dict,
     if any(len(c) == 0 for c in combined_clauses):
         raise RuntimeError("Augmented CNF is immediately UNSAT (contains empty clause).")
 
-    raw_samples = execute_pyunigen_on_clauses(
+    raw_samples, elapsed = execute_on_clauses(
+        backend=backend,
         clauses=combined_clauses,
         num_samples=num_samples
     )
 
-    parsed_samples = parse_pyunigen_samples_incremental(
+    parsed_samples = parse_samples_incremental(
         raw_samples,
         num_variables=compiled_problem["num_blasted_vars"],
         num_samples=num_samples
@@ -1407,7 +1431,7 @@ def sample_cached_pyunigen_problem(compiled_problem: dict,
         num_samples=num_samples
     )
 
-    return solver_samples
+    return solver_samples, elapsed
 
 
 # =========================================================
@@ -1437,18 +1461,20 @@ def extract_current_values_from_solver_sample(sample0, num_vars: int):
 # Main cached-CNF incremental sampler for PyUniGen
 # =========================================================
 
-def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
+def get_conditional_incremental_samples_sat_problem_cached(
+        backend: str,
         z3_problem: Goal,
         num_vars: int,
         num_bits: int,
-        D: int,
+        D: int = 1,
         num_samples: int = 10000,
         sanity_check_problem: bool = True,
         parallel_samples: int = 1,
         sanity_check_samples: bool = False,
         timeout: int = 1800,
         print_z3_model: bool = False,
-        bit_vars_are_lsb_first: bool = True):
+        bit_vars_are_lsb_first: bool = True,
+        time_tracking = False):
     """
     Cached-base-CNF strategy for PyUniGen.
 
@@ -1460,7 +1486,7 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
     if print_z3_model:
         print(z3_problem)
 
-    compiled = compile_base_pyunigen_problem(
+    compiled = compile_base_problem(
         z3_problem=z3_problem,
         num_vars=num_vars,
         num_bits=num_bits,
@@ -1469,6 +1495,7 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
 
     trace = []
     solver_samples = None
+    elapsed_time_per_sample = []
 
     for i in range(num_samples):
         print(f"Getting sample {i}")
@@ -1493,7 +1520,8 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
                 bit_vars_are_lsb_first=bit_vars_are_lsb_first
             )
 
-        solver_samples = sample_cached_pyunigen_problem(
+        solver_samples, elapsed = sample_cached_problem(
+            backend=backend,
             compiled_problem=compiled,
             extra_clauses=extra_clauses,
             num_samples=parallel_samples
@@ -1502,7 +1530,12 @@ def get_conditional_incremental_samples_sat_pyunigen_problem_cached(
         random_idx = random.randrange(len(solver_samples))
         chosen_sample = solver_samples[random_idx]
         trace.append(chosen_sample)
+        elapsed_time_per_sample.append(elapsed)
 
-    print("get_conditional_incremental_samples_sat_pyunigen_problem_cached is done")
+    print("get_conditional_incremental_samples_sat_problem_cached is done")
     print(trace)
-    return trace
+    if time_tracking == True:
+        return [trace, elapsed_time_per_sample]
+    else:
+        return trace
+    
