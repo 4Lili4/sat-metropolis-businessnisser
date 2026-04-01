@@ -917,13 +917,13 @@ def execute_on_clauses(backend,clauses, num_samples=1, rng=None):
         sampling_set=sampling_set,
         decode=None,
     )
-
+    t0 = time.perf_counter()   
     if backend == "pyunigen":
         sampler = uni.Sampler()
         for clause in permuted_clauses:
             sampler.add_clause(clause)
-        result = call_sample_pyunigen(sampler, permuted_sampling_set, num_samples=num_samples)
-
+        result = call_sample_pyunigen(sampler, permuted_sampling_set, num_samples=num_samples)           
+     
     elif backend == "pycmsgen":
         result = call_sample_pycmsgen(
             permuted_clauses,
@@ -931,6 +931,7 @@ def execute_on_clauses(backend,clauses, num_samples=1, rng=None):
             num_samples=num_samples,
             rng=rng,
         )
+    elapsed = time.perf_counter() - t0
 
     if isinstance(result, tuple) and len(result) == 3:
         _, _, samples = result
@@ -951,7 +952,7 @@ def execute_on_clauses(backend,clauses, num_samples=1, rng=None):
             f"{len(restored_samples)} < {num_samples}"
         )
 
-    return restored_samples[:num_samples]
+    return restored_samples[:num_samples], elapsed
 
 def parse_samples_incremental(samples,
                                        num_samples: int,
@@ -1405,7 +1406,7 @@ def sample_cached_problem(backend: str, compiled_problem: dict,
     if any(len(c) == 0 for c in combined_clauses):
         raise RuntimeError("Augmented CNF is immediately UNSAT (contains empty clause).")
 
-    raw_samples = execute_on_clauses(
+    raw_samples, elapsed = execute_on_clauses(
         backend=backend,
         clauses=combined_clauses,
         num_samples=num_samples
@@ -1430,7 +1431,7 @@ def sample_cached_problem(backend: str, compiled_problem: dict,
         num_samples=num_samples
     )
 
-    return solver_samples
+    return solver_samples, elapsed
 
 
 # =========================================================
@@ -1493,6 +1494,7 @@ def get_conditional_incremental_samples_sat_problem_cached(
 
     trace = []
     solver_samples = None
+    elapsed_time_per_sample = []
 
     for i in range(num_samples):
         print(f"Getting sample {i}")
@@ -1517,7 +1519,7 @@ def get_conditional_incremental_samples_sat_problem_cached(
                 bit_vars_are_lsb_first=bit_vars_are_lsb_first
             )
 
-        solver_samples = sample_cached_problem(
+        solver_samples, elapsed = sample_cached_problem(
             backend=backend,
             compiled_problem=compiled,
             extra_clauses=extra_clauses,
@@ -1527,7 +1529,12 @@ def get_conditional_incremental_samples_sat_problem_cached(
         random_idx = random.randrange(len(solver_samples))
         chosen_sample = solver_samples[random_idx]
         trace.append(chosen_sample)
+        elapsed_time_per_sample.append(elapsed)
 
     print("get_conditional_incremental_samples_sat_problem_cached is done")
     print(trace)
-    return trace
+    if time_tracking == True:
+        return [trace, elapsed_time_per_sample]
+    else:
+        return trace
+    

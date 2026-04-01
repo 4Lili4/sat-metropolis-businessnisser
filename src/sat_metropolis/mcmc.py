@@ -21,6 +21,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   backend: str,
                                   z3_problem,
                                   D: int = 1,
+                                  time_tracking = False,
                                   num_vars: int = None,  # mandatory for spur/cmsgen
                                   num_bits: int = None,  # mandatory for spur/cmsgen
                                   num_samples: int = 10000,
@@ -104,6 +105,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                 parallel_samples=parallel_samples,
                 num_samples=num_samples,
                 sanity_check_problem=True,
+                time_tracking = time_tracking,
                 print_z3_model=print_z3_model
         )
         elif backend == 'pycmsgen':
@@ -116,7 +118,8 @@ def sample_mh_trace_from_z3_model(method: str, #
                 parallel_samples=parallel_samples,
                 num_samples=num_samples,
                 sanity_check_problem=True,
-                print_z3_model=print_z3_model
+                time_tracking = time_tracking,
+            print_z3_model=print_z3_model
         )
     else:
         raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')
@@ -125,6 +128,9 @@ def sample_mh_trace_from_z3_model(method: str, #
 
     #plot samples
 
+    if time_tracking:
+        samples = samples[0]
+        tracked_time_inc_pyunigen = samples[1]
 
     keys = list(samples[0].keys())
     n = len(keys)
@@ -151,7 +157,7 @@ def sample_mh_trace_from_z3_model(method: str, #
     plt.show()
 
 
-
+  
 
     # run MCMC using the samples from spur or megasampler
     start_mcmc_time = time.time()
@@ -165,7 +171,10 @@ def sample_mh_trace_from_z3_model(method: str, #
     if time_execution:
         return (time_sample_gen, time_mcmc, trace)
     else:
-        return trace
+        if time_tracking == True:
+            return [trace, tracked_time_inc_pyunigen]
+        else:
+            return trace
 
 
 # TODO: add function for computing metropolis ratio
