@@ -21,7 +21,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   backend: str,
                                   z3_problem,
                                   D: int = 1,
-                                  time_tracking = False,
+                                  time_tracking: bool = False,
                                   num_vars: int = None,  # mandatory for spur/cmsgen
                                   num_bits: int = None,  # mandatory for spur/cmsgen
                                   num_samples: int = 10000,
@@ -129,8 +129,9 @@ def sample_mh_trace_from_z3_model(method: str, #
     #plot samples
 
     if time_tracking:
-        samples = samples[0]
         tracked_time_inc_pyunigen = samples[1]
+        samples = samples[0]
+        
 
     keys = list(samples[0].keys())
     n = len(keys)
