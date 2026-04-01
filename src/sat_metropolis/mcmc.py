@@ -17,7 +17,8 @@ import src.sat_metropolis.sat as sat
 import src.sat_metropolis.smt as smt
 
 
-def sample_mh_trace_from_z3_model(backend: str,
+def sample_mh_trace_from_z3_model(method: str, #
+                                  backend: str,
                                   z3_problem,
                                   D: int = 1,
                                   num_vars: int = None,  # mandatory for spur/cmsgen
@@ -47,72 +48,78 @@ def sample_mh_trace_from_z3_model(backend: str,
 
     start_time_sample_gen = time.time()
     samples = []
-    if backend == 'megasampler':
-        samples = smt.get_samples_smt_problem(
-            z3_problem=z3_problem,
-            algo=algo,
-            timeout=timeout_sampler,
-            num_samples=num_samples
+
+    if method == 'full':
+        if backend == 'megasampler':
+            samples = smt.get_samples_smt_problem(
+                z3_problem=z3_problem,
+                algo=algo,
+                timeout=timeout_sampler,
+                num_samples=num_samples
+            )
+        elif backend == 'spur':
+            samples = sat.get_samples_sat_problem(
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                num_samples=num_samples,
+                timeout=timeout_sampler,
+                print_z3_model=print_z3_model
+            )
+        elif backend == 'cmsgen':
+            samples = sat.get_samples_sat_cmsgen_problem(
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                timeout=timeout_sampler,
+                num_samples=num_samples,
+                print_z3_model=print_z3_model
+            )
+        elif backend == 'unigen':
+            samples = sat.get_samples_sat_unigen_problem(
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                timeout=timeout_sampler,
+                num_samples=num_samples,
+                print_z3_model=print_z3_model
         )
-    elif backend == 'spur':
-        samples = sat.get_samples_sat_problem(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            num_samples=num_samples,
-            timeout=timeout_sampler,
-            print_z3_model=print_z3_model
+        elif backend == 'pyunigen':
+            samples = sat.get_samples_sat_pyunigen_problem(
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                timeout=timeout_sampler,
+                num_samples=num_samples,
+                print_z3_model=print_z3_model
         )
-    elif backend == 'cmsgen':
-        samples = sat.get_samples_sat_cmsgen_problem(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            timeout=timeout_sampler,
-            num_samples=num_samples,
-            print_z3_model=print_z3_model
+    elif method == 'incremental':
+        if backend == 'pyunigen':
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+                backend='pyunigen',
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                D=D,
+                parallel_samples=parallel_samples,
+                num_samples=num_samples,
+                sanity_check_problem=True,
+                print_z3_model=print_z3_model
         )
-    elif backend == 'unigen':
-        samples = sat.get_samples_sat_unigen_problem(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            timeout=timeout_sampler,
-            num_samples=num_samples,
-            print_z3_model=print_z3_model
-    )
-    elif backend == 'pyunigen':
-        samples = sat.get_samples_sat_pyunigen_problem(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            timeout=timeout_sampler,
-            num_samples=num_samples,
-            print_z3_model=print_z3_model
-    )
-    elif backend == 'inc_pyunigen':
-        samples = sat.get_conditional_incremental_samples_sat_pyunigen_problem(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            timeout=timeout_sampler,
-            num_samples=parallel_samples,
-            num_iterations=num_iterations,
-            print_z3_model=print_z3_model,
-            D=D
-    )    
-        
-    elif backend == 'inc_pyunigen_new':
-        samples = sat.get_conditional_incremental_samples_sat_pyunigen_problem_cached(
-            z3_problem=z3_problem,
-            num_vars=num_vars,
-            num_bits=num_bits,
-            D=D,
-            parallel_samples=parallel_samples,
-            num_samples=num_samples,
-            sanity_check_problem=True,
-            print_z3_model=print_z3_model
-    )
+        elif backend == 'pycmsgen':
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+                backend='pycmsgen',
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                D=D,
+                parallel_samples=parallel_samples,
+                num_samples=num_samples,
+                sanity_check_problem=True,
+                print_z3_model=print_z3_model
+        )
+    else:
+        raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')
 
     time_sample_gen = time.time() - start_time_sample_gen
 
