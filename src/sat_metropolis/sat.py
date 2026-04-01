@@ -1473,7 +1473,8 @@ def get_conditional_incremental_samples_sat_problem_cached(
         sanity_check_samples: bool = False,
         timeout: int = 1800,
         print_z3_model: bool = False,
-        bit_vars_are_lsb_first: bool = True):
+        bit_vars_are_lsb_first: bool = True,
+        time_tracking = False):
     """
     Cached-base-CNF strategy for PyUniGen.
 
