@@ -966,6 +966,7 @@ def execute_on_clauses(backend, clauses, num_samples=1, rng=None):
     if rng is None:
         rng = random.Random()
 
+
     sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
 
     t0 = time.perf_counter()
@@ -1436,6 +1437,11 @@ def compile_base_problem(z3_problem: Goal,
 
     (num_blasted_vars, variables_number), z3_problem_cnf = save_dimacs_pyunigen(z3_problem)
 
+    precomputed_blasted_names = precompute_spur_to_z3_var_names(
+    variables_number,
+    num_blasted_vars
+)
+
     # save_dimacs_pyunigen returns a DIMACS-like structure where:
     #   z3_problem_cnf[0] is header / metadata
     #   z3_problem_cnf[1:] are clauses terminated by 0
@@ -1458,6 +1464,22 @@ def compile_base_problem(z3_problem: Goal,
         "base_clauses": clauses,
         "num_vars": num_vars,
         "num_bits": num_bits,
+        "precomputed_blasted_names": precomputed_blasted_names
+    }
+
+# =========================================================
+# trying to boost performance of map_spur_samples_to_z3_vars 
+# =========================================================
+
+def precompute_spur_to_z3_var_names(map_number_z3_var: dict[int, BoolRef],
+                                    num_variables: int) -> list[str]:
+    return [str(map_number_z3_var[i + 1]) for i in range(num_variables)]
+
+def map_spur_samples_to_z3_vars_precomputed(precomputed_names: list[str],
+                                            spur_parsed_samples):
+    return {
+        precomputed_names[i]: spur_parsed_samples[:, i]
+        for i in range(len(precomputed_names))
     }
 
 
@@ -1490,11 +1512,11 @@ def sample_cached_problem(backend: str, compiled_problem: dict,
         num_samples=num_samples
     )
 
-    map_variable_values = map_spur_samples_to_z3_vars(
-        compiled_problem["variables_number"],
-        compiled_problem["num_blasted_vars"],
+    map_variable_values = map_spur_samples_to_z3_vars_precomputed(
+        compiled_problem["precomputed_blasted_names"],
         parsed_samples
     )
+
 
     solver_samples = reverse_bit_blasting_simp(
         map_variable_values,
