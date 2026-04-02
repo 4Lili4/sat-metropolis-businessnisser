@@ -29,6 +29,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   num_iterations: int = 10000,
                                   num_chains: int = 4,
                                   timeout_sampler: int = 1800,  # seconds
+                                  fast_start: bool = False,
                                   algo: str = 'MeGA',  # only for MegaSampler
                                   f: Callable[[dict[str, int]], float] = lambda x: 1,  # by default all samples have the same probability
                                   reweight_samples: bool = False,  # only for samplers that produce sets of unique samples
@@ -96,7 +97,7 @@ def sample_mh_trace_from_z3_model(method: str, #
         )
     elif method == 'incremental':
         if backend == 'pyunigen':
-            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
                 backend='pyunigen',
                 z3_problem=z3_problem,
                 num_vars=num_vars,
@@ -109,7 +110,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                 print_z3_model=print_z3_model
         )
         elif backend == 'pycmsgen':
-            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
                 backend='pycmsgen',
                 z3_problem=z3_problem,
                 num_vars=num_vars,
@@ -119,7 +120,8 @@ def sample_mh_trace_from_z3_model(method: str, #
                 num_samples=num_samples,
                 sanity_check_problem=True,
                 time_tracking = time_tracking,
-            print_z3_model=print_z3_model
+                fast_start=fast_start,
+                print_z3_model=print_z3_model
         )
     else:
         raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')

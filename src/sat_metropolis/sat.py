@@ -12,7 +12,11 @@ import pyunigen as uni
 import pickle
 import random
 import pycmsgen as cms
-
+import os
+import time
+import random
+import numpy as np
+from z3 import Goal, unsat
 project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
 sys.path.append(project_root)
 
@@ -39,22 +43,52 @@ import src.sat_metropolis.utils as utils
 #       bit representating that position of the bit-vector. This is
 #       added as a constraint to the problem.
 
-def add_bool_vars_to_goal(g: Goal, var_list: [BitVecSort]):
-    """This function creates a Bool variable for each bit in the
-    BitVectors in `var_list`.
+# def add_bool_vars_to_goal(g: Goal, var_list: [BitVecSort]):
+#     """This function creates a Bool variable for each bit in the
+#     BitVectors in `var_list`.
 
-    Note that the name of the variables is fixed `x_ji` where j is the
-    index of the BitVector in `var_list` and i is the index of bit in
-    the corresponding BitVector.
-    """
-    # NOTE: We could try to obtain the variable name from `var_list`
+#     Note that the name of the variables is fixed `x_ji` where j is the
+#     index of the BitVector in `var_list` and i is the index of bit in
+#     the corresponding BitVector.
+#     """
+#     # NOTE: We could try to obtain the variable name from `var_list`
+#     bitmap = {}
+#     num_vars = len(var_list)
+#     for j in range(num_vars):
+#         num_bits = var_list[j].size()  # returns #bits in `var_list[j]`
+#         for i in range(num_bits):
+#             bitmap[var_list[j], i] = Bool(f'x{j}{i}')
+#             mask = BitVecSort(num_bits).cast(math.pow(2, i))
+#             g.add(bitmap[(var_list[j], i)] == ((var_list[j] & mask) == mask))
+
+def get_bit_digits(num_bits: int) -> int:
+    if num_bits <= 0:
+        raise RuntimeError("num_bits must be positive")
+    return len(str(num_bits - 1))
+
+
+def blasted_bit_name(var_idx: int, bit_idx: int, num_bits: int) -> str:
+    bit_digits = get_bit_digits(num_bits)
+    return f'x{var_idx}{bit_idx:0{bit_digits}d}'
+
+
+def add_bool_vars_to_goal(g: Goal, var_list: [BitVecSort]):
     bitmap = {}
     num_vars = len(var_list)
+
+    if num_vars == 0:
+        return
+
+    num_bits = var_list[0].size()
+    bit_digits = get_bit_digits(num_bits)
+
     for j in range(num_vars):
-        num_bits = var_list[j].size()  # returns #bits in `var_list[j]`
+        if var_list[j].size() != num_bits:
+            raise RuntimeError("All bit-vectors must have the same size")
+
         for i in range(num_bits):
-            bitmap[var_list[j], i] = Bool(f'x{j}{i}')
-            mask = BitVecSort(num_bits).cast(math.pow(2, i))
+            bitmap[var_list[j], i] = Bool(f'x{j}{i:0{bit_digits}d}')
+            mask = BitVecVal(1 << i, num_bits)
             g.add(bitmap[(var_list[j], i)] == ((var_list[j] & mask) == mask))
 
 
@@ -92,7 +126,7 @@ def sub_does_not_underflow(xs, signed=False):
 def convert_to_cnf_and_dimacs_simp(g: Goal) -> (
         [[str]],
         int,
-        dict[int, BoolRef]):
+        dict[int, BoolRef]): # type: ignore
     # Z3 bit-blasting from De Moura's post -> https://stackoverflow.com/a/13059908
     t = Then('simplify', 'bit-blast', 'tseitin-cnf')
     subgoal = t(g)
@@ -370,19 +404,41 @@ def map_spur_samples_to_z3_vars(map_number_z3_var: dict[int, BoolRef],
     return variable_values
 
 
+# def reverse_bit_blasting_simp(variable_values: dict[str, list[bool]],
+#                               num_samples: int,
+#                               num_vars: int,
+#                               num_bits: int) -> list[dict[str, int]]:
+#     def from_bin_to_dec(i, s, num_bits, map_variable_values):
+#         x = f'x{i}'
+#         total = 0
+#         for j in range(num_bits):
+#             total += 2**j * map_variable_values[f'{x}{j}'][s]
+#         return total
+
+#     solver_samples = [{f'x{i}': from_bin_to_dec(i, s, num_bits, variable_values)
+#                        for i in range(num_vars)} for s in range(num_samples)]
+
+#     return solver_samples
+
+
 def reverse_bit_blasting_simp(variable_values: dict[str, list[bool]],
                               num_samples: int,
                               num_vars: int,
                               num_bits: int) -> list[dict[str, int]]:
     def from_bin_to_dec(i, s, num_bits, map_variable_values):
-        x = f'x{i}'
         total = 0
         for j in range(num_bits):
-            total += 2**j * map_variable_values[f'{x}{j}'][s]
+            key = blasted_bit_name(i, j, num_bits)
+            total += (2 ** j) * map_variable_values[key][s]
         return total
 
-    solver_samples = [{f'x{i}': from_bin_to_dec(i, s, num_bits, variable_values)
-                       for i in range(num_vars)} for s in range(num_samples)]
+    solver_samples = [
+        {
+            f'x{i}': from_bin_to_dec(i, s, num_bits, variable_values)
+            for i in range(num_vars)
+        }
+        for s in range(num_samples)
+    ]
 
     return solver_samples
 
@@ -685,13 +741,12 @@ def parse_samples(samples,
                 ###### unigen generated {samples_numpy.shape[0]} samples on {samples_numpy.shape[1]} variables, but you specified {num_samples} samples and {num_variables} variables')
     return samples_numpy
 
-def get_samples_sat_problem(z3_problem: Goal,
+def get_samples_sat_pyunigen_problem(z3_problem: Goal,
                                    num_vars: int, # number of varibles unblasted
                                    num_bits: int, # number of bits of BitVectors
                                                   # (assumption: all the same)
                                    num_samples: int = 10000,
-                                   sanity_check_problem: bool = True,
-                                   sanity_check_samples: bool = False,
+                                   sanity_check_problem: bool = False,
                                    timeout: int = 1800,  # seconds
                                    print_z3_model: bool = False):
 
@@ -737,11 +792,7 @@ def get_samples_sat_problem(z3_problem: Goal,
 ###############################################################################################
 ###############################################################################################
 ###############################################################################################
-import os
-import time
-import random
-import numpy as np
-from z3 import Goal, unsat
+
 
 
 # =========================================================
@@ -786,24 +837,6 @@ def permute_problem(clauses, rng, sampling_set=None, decode=None):
 
     return permuted_clauses, permuted_sampling_set, permuted_decode, mp
 
-
-# def call_sample_once(sampler, sampling_set):
-#     """
-#     Try a few PyUniGen calling conventions.
-#     """
-#     errors = []
-
-#     for mode in ("kw_num_sampling", "pos_num_sampling", "pos_num"):
-#         try:
-#             if mode == "kw_num_sampling":
-#                 return sampler.sample(num=1, sampling_set=sampling_set)
-#             if mode == "pos_num_sampling":
-#                 return sampler.sample(1, sampling_set)
-#             return sampler.sample(1)
-#         except Exception as e:
-#             errors.append(f"{mode}: {repr(e)}")
-
-#     raise RuntimeError("Could not call pyunigen successfully.\n" + "\n".join(errors))
 
 def call_sample_pyunigen(sampler, sampling_set, num_samples):
     """
@@ -850,110 +883,6 @@ def invert_sample_with_decode(sample_lits, permuted_decode):
     return restored
 
 
-# def execute_on_clauses(clauses, num_samples=1, rng=None):
-#     """
-#     Run PyUniGen on an in-memory CNF clause list.
-
-#     Returns:
-#         restored_samples: list of samples in original variable numbering,
-#                           each sample is a list of signed literals
-#     """
-#     if rng is None:
-#         rng = random.Random()
-
-#     sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
-
-#     permuted_clauses, permuted_sampling_set, permuted_decode, _ = permute_problem(
-#         clauses,
-#         rng,
-#         sampling_set=sampling_set,
-#         decode=None,
-#     )
-
-#     sampler = uni.Sampler()
-#     for clause in permuted_clauses:
-#         sampler.add_clause(clause)
-
-#     all_restored = []
-
-#     # Keep your old behavior: one sample per call.
-#     # If you want, this can be extended later to block models and get several.
-#     for _ in range(num_samples):
-#         result = call_sample(sampler, permuted_sampling_set) #call_sample_once(sampler, permuted_sampling_set)
-
-#         if isinstance(result, tuple) and len(result) == 3:
-#             _, _, samples = result
-#         else:
-#             samples = result
-
-#         if not samples:
-#             raise RuntimeError("PyUniGen returned no sample.")
-
-#         restored_samples = [
-#             invert_sample_with_decode(sample, permuted_decode)
-#             for sample in samples
-#         ]
-
-#         all_restored.extend(restored_samples)
-
-#     return all_restored[:num_samples]
-
-# def execute_on_clauses(backend,clauses, num_samples=1, rng=None):
-#     """
-#     Run PyUniGen on an in-memory CNF clause list.
-
-#     Returns:
-#         restored_samples: list of samples in original variable numbering,
-#                           each sample is a list of signed literals
-#     """
-#     if rng is None:
-#         rng = random.Random()
-
-#     sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
-
-#     permuted_clauses, permuted_sampling_set, permuted_decode, _ = permute_problem(
-#         clauses,
-#         rng,
-#         sampling_set=sampling_set,
-#         decode=None,
-#     )
-    
-#     t0 = time.perf_counter()   
-#     if backend == "pyunigen":
-#         sampler = uni.Sampler()
-#         for clause in permuted_clauses:
-#             sampler.add_clause(clause)
-#         result = call_sample_pyunigen(sampler, permuted_sampling_set, num_samples=num_samples)           
-     
-#     elif backend == "pycmsgen":
-#         result = call_sample_pycmsgen(
-#             permuted_clauses,
-#             permuted_sampling_set,
-#             num_samples=num_samples,
-#             rng=rng,
-#         )
-#     elapsed = time.perf_counter() - t0
-
-#     if isinstance(result, tuple) and len(result) == 3:
-#         _, _, samples = result
-#     else:
-#         samples = result
-
-#     if not samples:
-#         raise RuntimeError("PyUniGen returned no sample.")
-
-#     restored_samples = [
-#         invert_sample_with_decode(sample, permuted_decode)
-#         for sample in samples
-#     ]
-
-#     if len(restored_samples) < num_samples:
-#         raise RuntimeError(
-#             f"PyUniGen returned fewer samples than requested: "
-#             f"{len(restored_samples)} < {num_samples}"
-#         )
-
-#     return restored_samples[:num_samples], elapsed
 
 def execute_on_clauses(backend, clauses, num_samples=1, rng=None):
     """
@@ -1229,20 +1158,24 @@ def encode_window_clauses_from_values(current_values: list[int],
     return clauses
 
 
-# =========================================================
-# Mapping from your variables_number structure
-# =========================================================
-
 # def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
 #     """
 #     Build:
 #         bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
 #     in LSB-first order.
 
-#     Expected names:
-#         x00, x01, ..., x14
-#     Ignore all k!N variables.
+#     Works for current naming scheme:
+#         x00, x01, ..., x98, x100, x101, ..., x718, etc.
+
+#     Assumption:
+#         num_bits <= 10, so bit index is one decimal digit.
 #     """
+#     if num_bits > 10:
+#         raise RuntimeError(
+#             "Current extractor assumes num_bits <= 10. "
+#             "For larger bit-widths, use a separator-based naming scheme."
+#         )
+
 #     bit_map = {i: [None] * num_bits for i in range(num_vars)}
 
 #     for dimacs_id, z3var in variables_number.items():
@@ -1253,12 +1186,15 @@ def encode_window_clauses_from_values(current_values: list[int],
 
 #         digits = name[1:]
 
-#         # Your current naming scheme
-#         if len(digits) != 2:
+#         # Need at least one digit for var index and one for bit index
+#         if len(digits) < 2:
 #             continue
 
-#         var_idx = int(digits[0])
-#         bit_idx = int(digits[1])
+#         var_part = digits[:-1]
+#         bit_part = digits[-1]
+
+#         var_idx = int(var_part)
+#         bit_idx = int(bit_part)
 
 #         if 0 <= var_idx < num_vars and 0 <= bit_idx < num_bits:
 #             if bit_map[var_idx][bit_idx] is not None:
@@ -1274,80 +1210,6 @@ def encode_window_clauses_from_values(current_values: list[int],
 #         for b in range(num_bits)
 #         if bit_map[i][b] is None
 #     ]
-#     if missing:
-#         raise RuntimeError(
-#             f"Missing x-bit DIMACS ids in variables_number: {missing}"
-#         )
-
-#     return bit_map
-
-# def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
-#     """
-#     Build:
-#         bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
-#     in LSB-first order.
-
-#     Supports names like:
-#         x00, x01, ..., x98, x100, x101, ..., x718, etc.
-
-#     Interpretation:
-#         x<var_idx><bit_idx>
-
-#     where bit_idx must be in [0, num_bits-1], and var_idx must be in [0, num_vars-1].
-
-#     All non-x variables (e.g. k!123) are ignored.
-#     """
-#     bit_map = {i: [None] * num_bits for i in range(num_vars)}
-
-#     for dimacs_id, z3var in variables_number.items():
-#         name = str(z3var)
-
-#         if not name.startswith("x"):
-#             continue
-
-#         digits = name[1:]
-#         matches = []
-
-#         # Try every split: digits[:split] = var_idx, digits[split:] = bit_idx
-#         for split in range(1, len(digits)):
-#             var_part = digits[:split]
-#             bit_part = digits[split:]
-
-#             # avoid weird leading-empty pieces
-#             if not var_part or not bit_part:
-#                 continue
-
-#             var_idx = int(var_part)
-#             bit_idx = int(bit_part)
-
-#             if 0 <= var_idx < num_vars and 0 <= bit_idx < num_bits:
-#                 matches.append((var_idx, bit_idx))
-
-#         if len(matches) == 0:
-#             continue
-
-#         if len(matches) > 1:
-#             raise RuntimeError(
-#                 f"Ambiguous x-variable name {name}: possible parses = {matches}. "
-#                 f"Need a more specific naming convention."
-#             )
-
-#         var_idx, bit_idx = matches[0]
-
-#         if bit_map[var_idx][bit_idx] is not None:
-#             raise RuntimeError(
-#                 f"Duplicate DIMACS mapping for x{var_idx} bit {bit_idx}: "
-#                 f"{bit_map[var_idx][bit_idx]} and {dimacs_id}"
-#             )
-
-#         bit_map[var_idx][bit_idx] = int(dimacs_id)
-
-#     missing = [
-#         (i, b)
-#         for i in range(num_vars)
-#         for b in range(num_bits)
-#         if bit_map[i][b] is None
-#     ]
 
 #     if missing:
 #         raise RuntimeError(
@@ -1355,26 +1217,11 @@ def encode_window_clauses_from_values(current_values: list[int],
 #         )
 
 #     return bit_map
+
 
 
 def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
-    """
-    Build:
-        bit_map[i] = [dimacs_id_for_x{i}0, ..., dimacs_id_for_x{i}{num_bits-1}]
-    in LSB-first order.
-
-    Works for current naming scheme:
-        x00, x01, ..., x98, x100, x101, ..., x718, etc.
-
-    Assumption:
-        num_bits <= 10, so bit index is one decimal digit.
-    """
-    if num_bits > 10:
-        raise RuntimeError(
-            "Current extractor assumes num_bits <= 10. "
-            "For larger bit-widths, use a separator-based naming scheme."
-        )
-
+    bit_digits = get_bit_digits(num_bits)
     bit_map = {i: [None] * num_bits for i in range(num_vars)}
 
     for dimacs_id, z3var in variables_number.items():
@@ -1385,12 +1232,11 @@ def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
 
         digits = name[1:]
 
-        # Need at least one digit for var index and one for bit index
-        if len(digits) < 2:
+        if len(digits) <= bit_digits:
             continue
 
-        var_part = digits[:-1]
-        bit_part = digits[-1]
+        var_part = digits[:-bit_digits]
+        bit_part = digits[-bit_digits:]
 
         var_idx = int(var_part)
         bit_idx = int(bit_part)
@@ -1416,6 +1262,9 @@ def extract_bitvec_dimacs_map(variables_number, num_vars: int, num_bits: int):
         )
 
     return bit_map
+
+
+
 # =========================================================
 # Compile base once
 # =========================================================
@@ -1633,3 +1482,644 @@ def get_conditional_incremental_samples_sat_problem_cached(
     else:
         return trace
     
+
+###############################################################################################
+#attempt at new inc pycmsgen pipeline
+###############################################################################################
+
+
+# =========================================================
+# CMSGen incremental helpers
+# =========================================================
+
+def build_base_cmsgen_solver(base_clauses, rng=None):
+    rng = rng or random.Random()
+    solver = cms.Solver(seed=rng.randrange(1, 2**31))
+
+    max_var = 0
+    for clause in base_clauses:
+        solver.add_clause(clause)
+        for lit in clause:
+            max_var = max(max_var, abs(lit))
+
+    return solver, max_var
+
+
+def add_guarded_window_clauses(solver, window_clauses, next_free_var):
+    """
+    Add each window clause C as (-act OR C).
+    The window is only active when act is assumed true in solve().
+    """
+    act = next_free_var + 1
+
+    for clause in window_clauses:
+        solver.add_clause([-act] + clause)
+
+    return act, act
+
+
+def call_sample_pycmsgen_assumptions(solver, sampling_set, num_samples=1, assumptions=None):
+    assumptions = assumptions or []
+    out = []
+
+    for _ in range(num_samples):
+        sat, model = solver.solve(assumptions=assumptions)
+        if sat is not True:
+            raise RuntimeError(f"CMSGen did not return SAT: {sat}")
+        out.append([v if model[v] else -v for v in sampling_set])
+
+    return out
+
+
+def sample_cached_problem_incremental_pycmsgen(
+    solver,
+    compiled_problem,
+    sampling_set,
+    extra_clauses,
+    num_samples,
+    next_free_var,
+):
+    """
+    Reuses the old decoding pipeline.
+    Only the sampling front-end is different.
+    """
+    if any(len(c) == 0 for c in extra_clauses):
+        raise RuntimeError("Augmented CNF is immediately UNSAT (contains empty clause).")
+
+    t0 = time.perf_counter()
+
+    if len(extra_clauses) == 0:
+        raw_samples = call_sample_pycmsgen_assumptions(
+            solver,
+            sampling_set,
+            num_samples=num_samples,
+            assumptions=[],
+        )
+    else:
+        act_lit, next_free_var = add_guarded_window_clauses(
+            solver,
+            extra_clauses,
+            next_free_var,
+        )
+
+        raw_samples = call_sample_pycmsgen_assumptions(
+            solver,
+            sampling_set,
+            num_samples=num_samples,
+            assumptions=[act_lit],
+        )
+
+    elapsed = time.perf_counter() - t0
+
+    parsed_samples = parse_samples_incremental(
+        raw_samples,
+        num_variables=compiled_problem["num_blasted_vars"],
+        num_samples=num_samples
+    )
+
+    map_variable_values = map_spur_samples_to_z3_vars_precomputed(
+        compiled_problem["precomputed_blasted_names"],
+        parsed_samples
+    )
+
+    solver_samples = reverse_bit_blasting_simp(
+        map_variable_values,
+        num_vars=compiled_problem["num_vars"],
+        num_bits=compiled_problem["num_bits"],
+        num_samples=num_samples
+    )
+
+    return solver_samples, elapsed, next_free_var
+
+
+# =========================================================
+# Main cached-CNF incremental sampler for CMSGen
+# =========================================================
+
+# def incremental_cmsgen_pipeline(
+#         z3_problem: Goal,
+#         num_vars: int,
+#         num_bits: int,
+#         D: int = 1,
+#         num_samples: int = 10000,
+#         sanity_check_problem: bool = True,
+#         parallel_samples: int = 1,
+#         sanity_check_samples: bool = False,
+#         timeout: int = 1800,
+#         print_z3_model: bool = False,
+#         bit_vars_are_lsb_first: bool = True,
+#         time_tracking: bool = False):
+#     """
+#     Cached-base-CNF strategy for incremental CMSGen.
+
+#     Reuses the old compile/encode/decode helpers.
+#     Only the SAT sampling layer changes.
+#     """
+#     if print_z3_model:
+#         print(z3_problem)
+
+#     compiled = compile_base_problem(
+#         z3_problem=z3_problem,
+#         num_vars=num_vars,
+#         num_bits=num_bits,
+#         sanity_check_problem=sanity_check_problem
+#     )
+
+#     sampling_set = sorted({
+#         abs(lit)
+#         for clause in compiled["base_clauses"]
+#         for lit in clause
+#     })
+
+#     solver, next_free_var = build_base_cmsgen_solver(
+#         compiled["base_clauses"]
+#     )
+
+#     trace = []
+#     elapsed_time_per_sample = []
+
+#     for i in range(num_samples):
+#         print(f"Getting sample {i}")
+
+#         if i == 0:
+#             extra_clauses = []
+#         else:
+#             current_values = extract_current_values_from_solver_sample(
+#                 chosen_sample,
+#                 num_vars=num_vars
+#             )
+
+#             extra_clauses = encode_window_clauses_from_values(
+#                 current_values=current_values,
+#                 bit_map=compiled["bit_map"],
+#                 num_vars=num_vars,
+#                 num_bits=num_bits,
+#                 D=D,
+#                 bit_vars_are_lsb_first=bit_vars_are_lsb_first
+#             )
+
+#         solver_samples, elapsed, next_free_var = sample_cached_problem_incremental_pycmsgen(
+#             solver=solver,
+#             compiled_problem=compiled,
+#             sampling_set=sampling_set,
+#             extra_clauses=extra_clauses,
+#             num_samples=parallel_samples,
+#             next_free_var=next_free_var,
+#         )
+
+#         random_idx = random.randrange(len(solver_samples))
+#         chosen_sample = solver_samples[random_idx]
+#         trace.append(chosen_sample)
+#         elapsed_time_per_sample.append(elapsed)
+
+#     print("incremental_cmsgen_pipeline is done")
+#     print(trace)
+
+#     if time_tracking:
+#         return [trace, elapsed_time_per_sample]
+#     else:
+#         return trace
+    
+
+# def incremental_cmsgen_pipeline(
+#         z3_problem: Goal,
+#         num_vars: int,
+#         num_bits: int,
+#         D: int = 1,
+#         num_samples: int = 10000,
+#         sanity_check_problem: bool = True,
+#         parallel_samples: int = 1,
+#         sanity_check_samples: bool = False,
+#         timeout: int = 1800,
+#         print_z3_model: bool = False,
+#         bit_vars_are_lsb_first: bool = True,
+#         time_tracking: bool = False,
+#         restart_every: int = 100):
+#     """
+#     Cached-base-CNF strategy for incremental CMSGen.
+
+#     Reuses the old compile/encode/decode helpers.
+#     Only the SAT sampling layer changes.
+#     """
+#     if print_z3_model:
+#         print(z3_problem)
+
+#     compiled = compile_base_problem(
+#         z3_problem=z3_problem,
+#         num_vars=num_vars,
+#         num_bits=num_bits,
+#         sanity_check_problem=sanity_check_problem
+#     )
+
+#     sampling_set = sorted({
+#         abs(lit)
+#         for clause in compiled["base_clauses"]
+#         for lit in clause
+#     })
+
+#     solver, next_free_var = build_base_cmsgen_solver(
+#         compiled["base_clauses"]
+#     )
+
+#     trace = []
+#     elapsed_time_per_sample = []
+
+#     for i in range(num_samples):
+#         if i > 0 and restart_every > 0 and i % restart_every == 0:
+#             print(f"Restarting CMSGen solver at sample {i}")
+#             solver, next_free_var = build_base_cmsgen_solver(
+#                 compiled["base_clauses"]
+#             )
+
+#         if i == 0:
+#             extra_clauses = []
+#         else:
+#             current_values = extract_current_values_from_solver_sample(
+#                 chosen_sample,
+#                 num_vars=num_vars
+#             )
+
+#             extra_clauses = encode_window_clauses_from_values(
+#                 current_values=current_values,
+#                 bit_map=compiled["bit_map"],
+#                 num_vars=num_vars,
+#                 num_bits=num_bits,
+#                 D=D,
+#                 bit_vars_are_lsb_first=bit_vars_are_lsb_first
+#             )
+
+#         solver_samples, elapsed, next_free_var = sample_cached_problem_incremental_pycmsgen(
+#             solver=solver,
+#             compiled_problem=compiled,
+#             sampling_set=sampling_set,
+#             extra_clauses=extra_clauses,
+#             num_samples=parallel_samples,
+#             next_free_var=next_free_var,
+#         )
+
+#         random_idx = random.randrange(len(solver_samples))
+#         chosen_sample = solver_samples[random_idx]
+#         trace.append(chosen_sample)
+#         elapsed_time_per_sample.append(elapsed)
+
+#     print("incremental_cmsgen_pipeline is done")
+#     print(trace)
+
+#     if time_tracking:
+#         return [trace, elapsed_time_per_sample]
+#     else:
+#         return trace    
+
+def find_valid_start_fast(solver, sampling_set, parallel_samples=1):
+    """
+    Quickly get one or more valid full assignments from the base solver
+    without adding any window clauses.
+
+    This is meant only for initialization.
+    """
+    out = []
+    print(f"Finding {parallel_samples} valid starting samples from base CMSGen solver...")
+    for _ in range(parallel_samples):
+        sat, model = solver.solve()
+        if sat is not True:
+            raise RuntimeError(f"CMSGen did not return SAT for fast start: {sat}")
+        out.append([v if model[v] else -v for v in sampling_set])
+    print(f"Found {len(out)} valid starting samples.")
+    return out
+
+def find_valid_start_fast_z3(z3_problem, num_vars, num_bits):
+    s = Solver()
+    s.add(z3_problem)
+
+    if s.check() != sat:
+        raise RuntimeError("Z3 could not find a satisfying start model.")
+
+    m = s.model()
+
+    return {
+        f"x{i}": m.eval(BitVec(f"x{i}", num_bits), model_completion=True).as_long()
+        for i in range(num_vars)
+    }
+
+
+# def incremental_cmsgen_pipeline(
+#         z3_problem: Goal,
+#         num_vars: int,
+#         num_bits: int,
+#         D: int = 1,
+#         num_samples: int = 10000,
+#         sanity_check_problem: bool = True,
+#         parallel_samples: int = 1,
+#         sanity_check_samples: bool = False,
+#         timeout: int = 1800,
+#         print_z3_model: bool = False,
+#         bit_vars_are_lsb_first: bool = True,
+#         time_tracking: bool = False,
+#         restart_every: int = 100,
+#         fast_start: bool = False):
+#     """
+#     Cached-base-CNF strategy for incremental CMSGen.
+
+#     Reuses the old compile/encode/decode helpers.
+#     Uses guarded window clauses + assumptions after initialization.
+#     """
+#     if print_z3_model:
+#         print(z3_problem)
+
+#     compiled = compile_base_problem(
+#         z3_problem=z3_problem,
+#         num_vars=num_vars,
+#         num_bits=num_bits,
+#         sanity_check_problem=sanity_check_problem
+#     )
+
+#     sampling_set = sorted({
+#         abs(lit)
+#         for clause in compiled["base_clauses"]
+#         for lit in clause
+#     })
+
+#     solver, next_free_var = build_base_cmsgen_solver(
+#         compiled["base_clauses"]
+#     )
+
+#     trace = []
+#     elapsed_time_per_sample = []
+
+#     for i in range(num_samples):
+#         print(f"Getting sample {i}")
+
+#         if i > 0 and restart_every > 0 and i % restart_every == 0:
+#             print(f"Restarting CMSGen solver at sample {i}")
+#             solver, next_free_var = build_base_cmsgen_solver(
+#                 compiled["base_clauses"]
+#             )
+
+#         t0 = time.perf_counter()
+
+#         if i == 0:
+#             if fast_start:
+#                 raw_samples = find_valid_start_fast_z3(
+#                     z3_problem,
+#                     num_vars,
+#                     num_bits,
+#                     compiled["bit_map"],
+#                     sampling_set,
+#                 )
+#             else:
+#                 raw_samples = call_sample_pycmsgen_assumptions(
+#                     solver,
+#                     sampling_set,
+#                     num_samples=parallel_samples,
+#                     assumptions=[],
+#                 )
+#         else:
+#             current_values = extract_current_values_from_solver_sample(
+#                 chosen_sample,
+#                 num_vars=num_vars
+#             )
+
+#             extra_clauses = encode_window_clauses_from_values(
+#                 current_values=current_values,
+#                 bit_map=compiled["bit_map"],
+#                 num_vars=num_vars,
+#                 num_bits=num_bits,
+#                 D=D,
+#                 bit_vars_are_lsb_first=bit_vars_are_lsb_first
+#             )
+
+#             if any(len(c) == 0 for c in extra_clauses):
+#                 raise RuntimeError("Window clauses are immediately UNSAT.")
+
+#             act_lit, next_free_var = add_guarded_window_clauses(
+#                 solver,
+#                 extra_clauses,
+#                 next_free_var,
+#             )
+
+#             raw_samples = call_sample_pycmsgen_assumptions(
+#                 solver,
+#                 sampling_set,
+#                 num_samples=parallel_samples,
+#                 assumptions=[act_lit],
+#             )
+
+#         elapsed = time.perf_counter() - t0
+
+#         parsed_samples = parse_samples_incremental(
+#             raw_samples,
+#             num_variables=compiled["num_blasted_vars"],
+#             num_samples=parallel_samples,
+#         )
+
+#         map_variable_values = map_spur_samples_to_z3_vars_precomputed(
+#             compiled["precomputed_blasted_names"],
+#             parsed_samples,
+#         )
+
+#         solver_samples = reverse_bit_blasting_simp(
+#             map_variable_values,
+#             num_vars=compiled["num_vars"],
+#             num_bits=compiled["num_bits"],
+#             num_samples=parallel_samples,
+#         )
+
+#         random_idx = random.randrange(len(solver_samples))
+#         chosen_sample = solver_samples[random_idx]
+#         trace.append(chosen_sample)
+#         elapsed_time_per_sample.append(elapsed)
+
+#     print("incremental_cmsgen_pipeline is done")
+#     print(trace)
+
+#     if time_tracking:
+#         return [trace, elapsed_time_per_sample]
+#     else:
+#         return trace
+
+
+def incremental_cmsgen_pipeline(
+        z3_problem: Goal,
+        num_vars: int,
+        num_bits: int,
+        D: int = 1,
+        num_samples: int = 10000,
+        sanity_check_problem: bool = True,
+        parallel_samples: int = 1,
+        sanity_check_samples: bool = False,
+        timeout: int = 1800,
+        print_z3_model: bool = False,
+        bit_vars_are_lsb_first: bool = True,
+        time_tracking: bool = False,
+        restart_every: int = 100,
+        fast_start: bool = False):
+    """
+    Cached-base-CNF strategy for incremental CMSGen.
+
+    Reuses the old compile/encode/decode helpers.
+    Uses guarded window clauses + assumptions after initialization.
+    """
+    if print_z3_model:
+        print(z3_problem)
+
+    compiled = compile_base_problem(
+        z3_problem=z3_problem,
+        num_vars=num_vars,
+        num_bits=num_bits,
+        sanity_check_problem=sanity_check_problem
+    )
+
+    sampling_set = sorted({
+        abs(lit)
+        for clause in compiled["base_clauses"]
+        for lit in clause
+    })
+
+    solver, next_free_var = build_base_cmsgen_solver(
+        compiled["base_clauses"]
+    )
+
+    trace = []
+    elapsed_time_per_sample = []
+
+    for i in range(num_samples):
+        #print(f"Getting sample {i}")
+
+        if i > 0 and restart_every > 0 and i % restart_every == 0:
+            print(f"Restarting CMSGen solver at sample {i}")
+            solver, next_free_var = build_base_cmsgen_solver(
+                compiled["base_clauses"]
+            )
+
+        t0 = time.perf_counter()
+
+        if i == 0 and fast_start:
+            chosen_sample = find_valid_start_fast_z3(
+                z3_problem,
+                num_vars,
+                num_bits,
+            )
+            trace.append(chosen_sample)
+            elapsed_time_per_sample.append(time.perf_counter() - t0)
+            continue
+
+        if i == 0:
+            raw_samples = call_sample_pycmsgen_assumptions(
+                solver,
+                sampling_set,
+                num_samples=parallel_samples,
+                assumptions=[],
+            )
+        else:
+            current_values = extract_current_values_from_solver_sample(
+                chosen_sample,
+                num_vars=num_vars
+            )
+
+            extra_clauses = encode_window_clauses_from_values(
+                current_values=current_values,
+                bit_map=compiled["bit_map"],
+                num_vars=num_vars,
+                num_bits=num_bits,
+                D=D,
+                bit_vars_are_lsb_first=bit_vars_are_lsb_first
+            )
+
+            if any(len(c) == 0 for c in extra_clauses):
+                raise RuntimeError("Window clauses are immediately UNSAT.")
+
+            act_lit, next_free_var = add_guarded_window_clauses(
+                solver,
+                extra_clauses,
+                next_free_var,
+            )
+
+            raw_samples = call_sample_pycmsgen_assumptions(
+                solver,
+                sampling_set,
+                num_samples=parallel_samples,
+                assumptions=[act_lit],
+            )
+
+        elapsed = time.perf_counter() - t0
+
+        parsed_samples = parse_samples_incremental(
+            raw_samples,
+            num_variables=compiled["num_blasted_vars"],
+            num_samples=parallel_samples,
+        )
+
+        map_variable_values = map_spur_samples_to_z3_vars_precomputed(
+            compiled["precomputed_blasted_names"],
+            parsed_samples,
+        )
+
+        solver_samples = reverse_bit_blasting_simp(
+            map_variable_values,
+            num_vars=compiled["num_vars"],
+            num_bits=compiled["num_bits"],
+            num_samples=parallel_samples,
+        )
+
+        random_idx = random.randrange(len(solver_samples))
+        chosen_sample = solver_samples[random_idx]
+        trace.append(chosen_sample)
+        elapsed_time_per_sample.append(elapsed)
+
+    print("incremental_cmsgen_pipeline is done")
+    print(trace)
+
+    if time_tracking:
+        return [trace, elapsed_time_per_sample]
+    else:
+        return trace
+
+
+def get_conditional_incremental_samples_sat_problem_cached_dispatch(
+        backend: str,
+        z3_problem: Goal,
+        num_vars: int,
+        num_bits: int,
+        D: int = 1,
+        num_samples: int = 10000,
+        sanity_check_problem: bool = True,
+        parallel_samples: int = 1,
+        sanity_check_samples: bool = False,
+        timeout: int = 1800,
+        print_z3_model: bool = False,
+        bit_vars_are_lsb_first: bool = True,
+        time_tracking: bool = False,
+        fast_start: bool = False,):
+
+    if backend == "pycmsgen":
+        return incremental_cmsgen_pipeline(
+            z3_problem=z3_problem,
+            num_vars=num_vars,
+            num_bits=num_bits,
+            D=D,
+            num_samples=num_samples,
+            sanity_check_problem=sanity_check_problem,
+            parallel_samples=parallel_samples,
+            sanity_check_samples=sanity_check_samples,
+            timeout=timeout,
+            print_z3_model=print_z3_model,
+            bit_vars_are_lsb_first=bit_vars_are_lsb_first,
+            time_tracking=time_tracking,
+            fast_start=fast_start,
+        )
+
+    return get_conditional_incremental_samples_sat_problem_cached(
+        backend=backend,
+        z3_problem=z3_problem,
+        num_vars=num_vars,
+        num_bits=num_bits,
+        D=D,
+        num_samples=num_samples,
+        sanity_check_problem=sanity_check_problem,
+        parallel_samples=parallel_samples,
+        sanity_check_samples=sanity_check_samples,
+        timeout=timeout,
+        print_z3_model=print_z3_model,
+        bit_vars_are_lsb_first=bit_vars_are_lsb_first,
+        time_tracking=time_tracking,
+    )
