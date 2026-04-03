@@ -34,7 +34,8 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   f: Callable[[dict[str, int]], float] = lambda x: 1,  # by default all samples have the same probability
                                   reweight_samples: bool = False,  # only for samplers that produce sets of unique samples
                                   print_z3_model: bool = False, # for debugging purposes it is possible to print the z3 model
-                                  time_execution: bool = False): # if true, returns the execution time of metropolis and the SAT/SMT backend separaterly
+                                  time_execution: bool = False,
+                                  print_progress: bool = True): # if true, returns the execution time of metropolis and the SAT/SMT backend separaterly
     """This function runs sat-metropolis using the Z3 problem specified
     in `z3_problem` with the backend specified in `backend`. The
     backend may be 'spur', 'cmsgen' or 'megasampler'. The z3_problem
@@ -106,8 +107,10 @@ def sample_mh_trace_from_z3_model(method: str, #
                 parallel_samples=parallel_samples,
                 num_samples=num_samples,
                 sanity_check_problem=True,
-                time_tracking = time_tracking,
-                print_z3_model=print_z3_model
+                time_tracking=time_tracking,
+                fast_start=fast_start,
+                print_z3_model=print_z3_model,
+                print_progress=print_progress
         )
         elif backend == 'pycmsgen':
             samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
@@ -121,7 +124,8 @@ def sample_mh_trace_from_z3_model(method: str, #
                 sanity_check_problem=True,
                 time_tracking = time_tracking,
                 fast_start=fast_start,
-                print_z3_model=print_z3_model
+                print_z3_model=print_z3_model,
+                print_progress=print_progress
         )
     else:
         raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')
