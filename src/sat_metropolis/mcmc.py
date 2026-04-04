@@ -29,11 +29,14 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   num_iterations: int = 10000,
                                   num_chains: int = 4,
                                   timeout_sampler: int = 1800,  # seconds
+                                  fast_start: bool = False,
                                   algo: str = 'MeGA',  # only for MegaSampler
                                   f: Callable[[dict[str, int]], float] = lambda x: 1,  # by default all samples have the same probability
                                   reweight_samples: bool = False,  # only for samplers that produce sets of unique samples
                                   print_z3_model: bool = False, # for debugging purposes it is possible to print the z3 model
-                                  time_execution: bool = False): # if true, returns the execution time of metropolis and the SAT/SMT backend separaterly
+                                  time_execution: bool = False, 
+                                  print_progress: bool = True,
+                                  plotting: bool = True):
     """This function runs sat-metropolis using the Z3 problem specified
     in `z3_problem` with the backend specified in `backend`. The
     backend may be 'spur', 'cmsgen' or 'megasampler'. The z3_problem
@@ -96,7 +99,7 @@ def sample_mh_trace_from_z3_model(method: str, #
         )
     elif method == 'incremental':
         if backend == 'pyunigen':
-            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
                 backend='pyunigen',
                 z3_problem=z3_problem,
                 num_vars=num_vars,
@@ -105,11 +108,13 @@ def sample_mh_trace_from_z3_model(method: str, #
                 parallel_samples=parallel_samples,
                 num_samples=num_samples,
                 sanity_check_problem=True,
-                time_tracking = time_tracking,
-                print_z3_model=print_z3_model
+                time_tracking=time_tracking,
+                fast_start=fast_start,
+                print_z3_model=print_z3_model,
+                print_progress=print_progress
         )
         elif backend == 'pycmsgen':
-            samples = sat.get_conditional_incremental_samples_sat_problem_cached(
+            samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
                 backend='pycmsgen',
                 z3_problem=z3_problem,
                 num_vars=num_vars,
@@ -119,7 +124,9 @@ def sample_mh_trace_from_z3_model(method: str, #
                 num_samples=num_samples,
                 sanity_check_problem=True,
                 time_tracking = time_tracking,
-            print_z3_model=print_z3_model
+                fast_start=fast_start,
+                print_z3_model=print_z3_model,
+                print_progress=print_progress
         )
     else:
         raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')
@@ -133,29 +140,31 @@ def sample_mh_trace_from_z3_model(method: str, #
         samples = samples[0]
         
 
-    keys = list(samples[0].keys())
-    n = len(keys)
+        
+    if plotting:
+        keys = list(samples[0].keys())
+        n = len(keys)
 
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
+        fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
 
-    # make axes iterable when n == 1
-    if n == 1:
-        axes = [axes]
+        # make axes iterable when n == 1
+        if n == 1:
+            axes = [axes]
 
-    for ax, key in zip(axes, keys):
-        vals = [d[key] for d in samples]
-        c = Counter(vals)
+        for ax, key in zip(axes, keys):
+            vals = [d[key] for d in samples]
+            c = Counter(vals)
 
-        total = sum(c.values())
-        normalized = {k: v / total for k, v in c.items()}
+            total = sum(c.values())
+            normalized = {k: v / total for k, v in c.items()}
 
-        ax.bar(list(normalized.keys()), list(normalized.values()))
-        ax.set_title(key)
-        ax.set_ylabel("Probability")
-        ax.set_xlabel("Value")
+            ax.bar(list(normalized.keys()), list(normalized.values()))
+            ax.set_title(key)
+            ax.set_ylabel("Probability")
+            ax.set_xlabel("Value")
 
-    plt.tight_layout()
-    plt.show()
+        plt.tight_layout()
+        plt.show()
 
 
   
