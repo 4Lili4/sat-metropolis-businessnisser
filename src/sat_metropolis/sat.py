@@ -648,6 +648,7 @@ def get_samples_sat_pyunigen_problem(
     sanity_check_problem: bool = False,
     timeout: int = 1800,
     print_z3_model: bool = False,
+    time_tracking: bool = False,
 ):
     if print_z3_model:
         print(z3_problem)
@@ -659,11 +660,13 @@ def get_samples_sat_pyunigen_problem(
         sanity_check_problem=sanity_check_problem,
     )
 
-    solver_samples, _ = sample_cached_problem_pyunigen(
+    solver_samples, elapsed = sample_cached_problem_pyunigen(
         compiled_problem=compiled,
         extra_clauses=[],
         num_samples=num_samples,
     )
+    if time_tracking:
+        return [solver_samples, [elapsed]]
 
     return solver_samples
 
@@ -1008,7 +1011,7 @@ def encode_window_clauses_from_values(current_values,
 # Backend-specific cached samplers
 # =========================================================
 
-def sample_cached_problem_pyunigen(compiled_problem, extra_clauses, num_samples, rng=None):
+def sample_cached_problem_pyunigen(compiled_problem, extra_clauses, num_samples, rng=None, time_tracking=False):
     combined_clauses = compiled_problem["base_clauses"] + (extra_clauses or [])
     if any(len(c) == 0 for c in combined_clauses):
         raise RuntimeError("Augmented CNF is immediately UNSAT (contains empty clause).")
@@ -1050,24 +1053,6 @@ def sample_cached_problem_pycmsgen(compiled_problem, solver, next_free_var, extr
         elapsed,
         next_free_var,
     )
-
-# =========================================================
-# Full samplers
-# =========================================================
-
-def get_samples_sat_pyunigen_problem(z3_problem: Goal,
-                                     num_vars: int,
-                                     num_bits: int,
-                                     num_samples: int = 10000,
-                                     sanity_check_problem: bool = False,
-                                     timeout: int = 1800,
-                                     print_z3_model: bool = False):
-    if print_z3_model:
-        print(z3_problem)
-
-    compiled = compile_base_problem(z3_problem, num_vars, num_bits, sanity_check_problem)
-    samples, _ = sample_cached_problem_pyunigen(compiled, [], num_samples)
-    return samples
 
 def get_samples_sat_pycmsgen_problem(z3_problem: Goal,
                                      num_vars: int,

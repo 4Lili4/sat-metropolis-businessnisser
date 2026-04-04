@@ -95,8 +95,9 @@ def sample_mh_trace_from_z3_model(method: str, #
                 num_bits=num_bits,
                 timeout=timeout_sampler,
                 num_samples=num_samples,
-                print_z3_model=print_z3_model
-        )
+                print_z3_model=print_z3_model,
+                time_tracking=time_tracking
+            )
     elif method == 'incremental':
         if backend == 'pyunigen':
             samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
