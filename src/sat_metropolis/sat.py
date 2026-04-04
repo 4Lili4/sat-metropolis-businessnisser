@@ -1148,6 +1148,9 @@ def incremental_cmsgen_pipeline(
     solver, next_free_var = build_base_cmsgen_solver(compiled["base_clauses"], rng=rng)
 
     for i in range(start_idx, num_samples):
+        if print_progress:
+            print(f"sample {i}")
+
         if i > start_idx and restart_every and i % restart_every == 0:
             if print_progress:
                 print(f"Restarting CMSGen solver at sample {i}")
