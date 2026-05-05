@@ -36,6 +36,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   print_z3_model: bool = False, # for debugging purposes it is possible to print the z3 model
                                   time_execution: bool = False, 
                                   print_progress: bool = True,
+                                  restart_every: int = 100, # only for incremental method with pycmsgen backend, it specifies after how many samples to restart the solver (to avoid performance degradation due to learned clauses)
                                   plotting: bool = True):
     """This function runs sat-metropolis using the Z3 problem specified
     in `z3_problem` with the backend specified in `backend`. The
@@ -98,6 +99,16 @@ def sample_mh_trace_from_z3_model(method: str, #
                 print_z3_model=print_z3_model,
                 time_tracking=time_tracking
             )
+        elif backend == 'pycmsgen':
+            samples = sat.get_samples_sat_pycmsgen_problem(
+                z3_problem=z3_problem,
+                num_vars=num_vars,
+                num_bits=num_bits,
+                timeout=timeout_sampler,
+                num_samples=num_samples,
+                print_z3_model=print_z3_model,
+                time_tracking=time_tracking
+            )
     elif method == 'incremental':
         if backend == 'pyunigen':
             samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
@@ -127,6 +138,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                 time_tracking = time_tracking,
                 fast_start=fast_start,
                 print_z3_model=print_z3_model,
+                restart_every=restart_every,
                 print_progress=print_progress
         )
     else:
