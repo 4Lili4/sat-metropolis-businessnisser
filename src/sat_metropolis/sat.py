@@ -19,7 +19,7 @@ import numpy as np
 from z3 import Goal, unsat
 project_root = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..", ".."))
 sys.path.append(project_root)
-
+from z3 import Solver, BitVec, BitVecVal, Or, ULT, UGT, sat
 import src.sat_metropolis.utils as utils
 
 # from utils import * 
@@ -710,6 +710,99 @@ def get_samples_sat_pycmsgen_problem(
 #  ╚═╝ ╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚══════╝  #
 ##################################################################################################
 
+def init_range_tracker(num_vars: int):
+    return {
+        "mins": [None] * num_vars,
+        "maxs": [None] * num_vars,
+        "steps_since_update": [0] * num_vars,
+        "blocked_unsat_ranges": [None] * num_vars,
+    }
+
+
+def reset_range_tracker_from_sample(tracker, sample, num_vars: int):
+    vals = extract_current_values_from_solver_sample(sample, num_vars)
+
+    for i, v in enumerate(vals):
+        v = int(v)
+        tracker["mins"][i] = v
+        tracker["maxs"][i] = v
+        tracker["steps_since_update"][i] = 0
+        tracker["blocked_unsat_ranges"][i] = None
+
+
+def update_range_tracker_from_sample(tracker, sample, num_vars: int):
+    vals = extract_current_values_from_solver_sample(sample, num_vars)
+
+    for i, v in enumerate(vals):
+        v = int(v)
+
+        if tracker["mins"][i] is None:
+            tracker["mins"][i] = v
+            tracker["maxs"][i] = v
+            tracker["steps_since_update"][i] = 0
+            tracker["blocked_unsat_ranges"][i] = None
+            continue
+
+        old_min = tracker["mins"][i]
+        old_max = tracker["maxs"][i]
+
+        if v < old_min or v > old_max:
+            tracker["mins"][i] = min(old_min, v)
+            tracker["maxs"][i] = max(old_max, v)
+            tracker["steps_since_update"][i] = 0
+            tracker["blocked_unsat_ranges"][i] = None
+        else:
+            tracker["steps_since_update"][i] += 1
+
+
+def find_valid_start_fast_z3_outside_var_range(
+    z3_problem,
+    num_vars: int,
+    num_bits: int,
+    var_idx: int,
+    range_min: int,
+    range_max: int,
+):
+    """
+    Finds a Z3 model satisfying the base problem plus:
+
+        x_var_idx < range_min OR x_var_idx > range_max
+
+    Uses no window constraints.
+    Returns None if UNSAT.
+    """
+    max_val = (1 << num_bits) - 1
+
+    if range_min <= 0 and range_max >= max_val:
+        return None
+
+    s = Solver()
+    s.add(z3_problem)
+
+    x = BitVec(f"x{var_idx}", num_bits)
+
+    outside_terms = []
+
+    if range_min > 0:
+        outside_terms.append(ULT(x, BitVecVal(range_min, num_bits)))
+
+    if range_max < max_val:
+        outside_terms.append(UGT(x, BitVecVal(range_max, num_bits)))
+
+    if not outside_terms:
+        return None
+
+    s.add(Or(*outside_terms))
+
+    if s.check() != sat:
+        return None
+
+    m = s.model()
+
+    return {
+        f"x{i}": m.eval(BitVec(f"x{i}", num_bits), model_completion=True).as_long()
+        for i in range(num_vars)
+    }
 
 def compute_D_vec_from_trace(trace, num_vars: int, min_D: int = 1):
     """
@@ -1362,9 +1455,9 @@ def incremental_pyunigen_pipeline(
 
 #     return {"trace": trace, "elapsed_time_per_sample": elapsed_time_per_sample}
 
-
 def incremental_cmsgen_pipeline(
     compiled,
+    z3_problem,
     chosen_sample,
     trace,
     elapsed_time_per_sample,
@@ -1376,12 +1469,22 @@ def incremental_cmsgen_pipeline(
     rng,
     restart_every=1000,
     print_progress=True,
+    recompute_D=True,
+    escape_stagnant_ranges=False,
+    stagnant_range_steps=1000,
 ):
     solver, next_free_var = build_base_cmsgen_solver(compiled["base_clauses"], rng=rng)
 
-    # Initial per-variable D.
-    # If there is not enough trace yet, this becomes [D, D, ..., D].
     D_vec = [int(D)] * compiled["num_vars"]
+
+    range_tracker = init_range_tracker(compiled["num_vars"])
+
+    if chosen_sample is not None:
+        reset_range_tracker_from_sample(
+            range_tracker,
+            chosen_sample,
+            compiled["num_vars"],
+        )
 
     for i in range(start_idx, num_samples):
         if print_progress and i % 10 == 0:
@@ -1391,21 +1494,115 @@ def incremental_cmsgen_pipeline(
             if print_progress:
                 print(f"Restarting CMSGen solver at sample {i}")
 
-            solver, next_free_var = build_base_cmsgen_solver(compiled["base_clauses"], rng=rng)
-
-            # Update D per variable at reset time
-            D_vec = compute_D_vec_from_trace(
-                trace=trace,
-                num_vars=compiled["num_vars"],
-                min_D=1,
+            solver, next_free_var = build_base_cmsgen_solver(
+                compiled["base_clauses"],
+                rng=rng,
             )
 
-            if print_progress:
-                print(f"Updated per-variable D: {D_vec}")
+            if recompute_D:
+                D_vec = compute_D_vec_from_trace(
+                    trace=trace,
+                    num_vars=compiled["num_vars"],
+                    min_D=1,
+                )
 
+                if print_progress:
+                    print(f"Updated per-variable D: {D_vec}")
+
+                if chosen_sample is not None:
+                    reset_range_tracker_from_sample(
+                        range_tracker,
+                        chosen_sample,
+                        compiled["num_vars"],
+                    )
+
+        # =====================================================
+        # Stagnant-range escape logic
+        # =====================================================
+        if (
+            escape_stagnant_ranges
+            and chosen_sample is not None
+            and i > 0
+        ):
+            escape_var = None
+
+            for var_idx in range(compiled["num_vars"]):
+                lo = range_tracker["mins"][var_idx]
+                hi = range_tracker["maxs"][var_idx]
+
+                if lo is None or hi is None:
+                    continue
+
+                current_range = (lo, hi)
+
+                if range_tracker["steps_since_update"][var_idx] < stagnant_range_steps:
+                    continue
+
+                if range_tracker["blocked_unsat_ranges"][var_idx] == current_range:
+                    continue
+
+                escape_var = var_idx
+                break
+
+            if escape_var is not None:
+                lo = range_tracker["mins"][escape_var]
+                hi = range_tracker["maxs"][escape_var]
+
+                if print_progress:
+                    print(
+                        f"Variable x{escape_var} stagnant for "
+                        f"{range_tracker['steps_since_update'][escape_var]} steps "
+                        f"inside [{lo}, {hi}]. Trying FAST_START escape."
+                    )
+
+                t0 = time.perf_counter()
+
+                escape_sample = find_valid_start_fast_z3_outside_var_range(
+                    z3_problem=z3_problem,
+                    num_vars=compiled["num_vars"],
+                    num_bits=compiled["num_bits"],
+                    var_idx=escape_var,
+                    range_min=lo,
+                    range_max=hi,
+                )
+
+                elapsed = time.perf_counter() - t0
+
+                if escape_sample is None:
+                    range_tracker["blocked_unsat_ranges"][escape_var] = (lo, hi)
+
+                    if print_progress:
+                        print(
+                            f"FAST_START escape for x{escape_var} outside "
+                            f"[{lo}, {hi}] was UNSAT. Will not retry same range."
+                        )
+
+                else:
+                    chosen_sample = escape_sample
+                    trace.append(chosen_sample)
+                    elapsed_time_per_sample.append(elapsed)
+
+                    update_range_tracker_from_sample(
+                        range_tracker,
+                        chosen_sample,
+                        compiled["num_vars"],
+                    )
+
+                    if print_progress:
+                        print(
+                            f"FAST_START escape succeeded for x{escape_var}: "
+                            f"{chosen_sample}"
+                        )
+
+                    continue
+
+        # =====================================================
+        # Normal CMSGen windowed sampling
+        # =====================================================
         extra_clauses = [] if i == 0 else encode_window_clauses_from_values_per_variable_D(
             current_values=extract_current_values_from_solver_sample(
-                chosen_sample, compiled["num_vars"]
+                chosen_sample,
+                compiled["num_vars"],
             ),
             bit_map=compiled["bit_map"],
             num_vars=compiled["num_vars"],
@@ -1426,12 +1623,16 @@ def incremental_cmsgen_pipeline(
         trace.append(chosen_sample)
         elapsed_time_per_sample.append(elapsed)
 
+        update_range_tracker_from_sample(
+            range_tracker,
+            chosen_sample,
+            compiled["num_vars"],
+        )
+
     return {
         "trace": trace,
         "elapsed_time_per_sample": elapsed_time_per_sample,
     }
-
-
 # =========================================================
 # Sleek dispatch
 # =========================================================
@@ -1452,6 +1653,9 @@ def get_conditional_incremental_samples_sat_problem_cached_dispatch(
     time_tracking: bool = False,
     restart_every: int = 100,
     fast_start: bool = False,
+    recompute_D: bool = False,
+    escape_stagnant_ranges: bool = False,
+    stagnant_range_steps: int = 1000,
     print_progress: bool = True,
 ):
     if print_z3_model:
@@ -1493,12 +1697,19 @@ def get_conditional_incremental_samples_sat_problem_cached_dispatch(
         restart_every=restart_every,
         print_progress=print_progress,
     )
-    time.sleep(0.5)  # just to make sure the print statements are not interleaved with the next steps
 
     if backend == "pyunigen":
         result = incremental_pyunigen_pipeline(**common_kwargs)
+
     elif backend == "pycmsgen":
-        result = incremental_cmsgen_pipeline(**common_kwargs)
+        result = incremental_cmsgen_pipeline(
+            **common_kwargs,
+            z3_problem=z3_problem,
+            recompute_D=recompute_D,
+            escape_stagnant_ranges=escape_stagnant_ranges,
+            stagnant_range_steps=stagnant_range_steps,
+        )
+
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

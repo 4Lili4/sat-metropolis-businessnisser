@@ -36,6 +36,9 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   print_z3_model: bool = False, # for debugging purposes it is possible to print the z3 model
                                   time_execution: bool = False, 
                                   print_progress: bool = True,
+                                  recompute_D: bool = False,
+                                  escape_stagnant_ranges: bool = False,
+                                  stagnant_range_steps: int = 1000,
                                   restart_every: int = 100, # only for incremental method with pycmsgen backend, it specifies after how many samples to restart the solver (to avoid performance degradation due to learned clauses)
                                   plotting: bool = True):
     """This function runs sat-metropolis using the Z3 problem specified
@@ -132,10 +135,13 @@ def sample_mh_trace_from_z3_model(method: str, #
                 num_vars=num_vars,
                 num_bits=num_bits,
                 D=D,
+                recompute_D=recompute_D,
+                escape_stagnant_ranges=escape_stagnant_ranges,
+                stagnant_range_steps=stagnant_range_steps,
                 parallel_samples=parallel_samples,
                 num_samples=num_samples,
                 sanity_check_problem=True,
-                time_tracking = time_tracking,
+                time_tracking=time_tracking,
                 fast_start=fast_start,
                 print_z3_model=print_z3_model,
                 restart_every=restart_every,
