@@ -39,8 +39,8 @@ def sample_mh_trace_from_z3_model(method: str, #
                                   recompute_D: bool = False,
                                   escape_stagnant_ranges: bool = False,
                                   stagnant_range_steps: int = 1000,
-                                  restart_every: int = 100, # only for incremental method with pycmsgen backend, it specifies after how many samples to restart the solver (to avoid performance degradation due to learned clauses)
-                                  plotting: bool = True):
+                                  restart_every: int = 100, # only for conditional method with pycmsgen backend, it specifies after how many samples to restart the solver (to avoid performance degradation due to learned clauses)
+                                  plotting: bool = False):
     """This function runs sat-metropolis using the Z3 problem specified
     in `z3_problem` with the backend specified in `backend`. The
     backend may be 'spur', 'cmsgen' or 'megasampler'. The z3_problem
@@ -57,7 +57,7 @@ def sample_mh_trace_from_z3_model(method: str, #
     start_time_sample_gen = time.time()
     samples = []
 
-    if method == 'full':
+    if method == 'independent':
         if backend == 'megasampler':
             samples = smt.get_samples_smt_problem(
                 z3_problem=z3_problem,
@@ -112,7 +112,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                 print_z3_model=print_z3_model,
                 time_tracking=time_tracking
             )
-    elif method == 'incremental':
+    elif method == 'conditional':
         if backend == 'pyunigen':
             samples = sat.get_conditional_incremental_samples_sat_problem_cached_dispatch(
                 backend='pyunigen',
@@ -148,7 +148,7 @@ def sample_mh_trace_from_z3_model(method: str, #
                 print_progress=print_progress
         )
     else:
-        raise ValueError(f'Method {method} not recognized. Please choose either "full" or "incremental".')
+        raise ValueError(f'Method {method} not recognized. Please choose either "independent" or "conditional".')
 
     time_sample_gen = time.time() - start_time_sample_gen
 
