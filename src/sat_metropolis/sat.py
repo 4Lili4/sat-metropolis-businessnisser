@@ -607,17 +607,14 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
                                                        UNIGEN_INPUT_FILEPATH)
 
     # UNIGEN sampling \o/
-    print("Executing Unigen sampler")
     execute_unigen(UNIGEN_INPUT_FILEPATH,
                    UNIGEN_OUTPUT_FILEPATH,
                    num_samples=num_samples,
                    timeout=timeout)
 
     # parsing UNIGEN samples
-    print("Parsing unigen samples")
     samples = parse_unigen_samples(UNIGEN_INPUT_DIR, UNIGEN_OUTPUT_FILE,
                                    num_samples, num_blasted_vars)
-    print(samples)
     # map spur samples to the corresponding Z3 variable
     map_variable_values = map_spur_samples_to_z3_vars(variables_number,
                                                       num_blasted_vars,
@@ -628,14 +625,7 @@ def get_samples_sat_unigen_problem(z3_problem: Goal,
                                                num_samples,
                                                num_vars,
                                                num_bits)
-    print(solver_samples)
-    # TEST_FILEPATH = F'{UNIGEN_INPUT_DIR}/{'unigen_test.pkl'}'
-    # with open(TEST_FILEPATH, 'wb') as file:
-    #     pickle.dump(solver_samples, file)
 
-    # with open(TEST_FILEPATH, "wb") as f:
-    #     for sample in solver_samples:
-    #         f.write(" ".join(map(str, sample)) + "\n")
     return solver_samples
     
 
@@ -873,24 +863,6 @@ def encode_window_clauses_from_values_per_variable_D(
 # PyUniGen helpers
 # =========================================================
 
-# def permute_problem(clauses, rng, sampling_set):
-#     old_vars = sampling_set[:]
-#     new_vars = sampling_set[:]
-#     rng.shuffle(new_vars)
-
-#     mp = dict(zip(old_vars, new_vars))
-
-#     permuted_clauses = [
-#         [mp[abs(lit)] if lit > 0 else -mp[abs(lit)] for lit in clause]
-#         for clause in clauses
-#     ]
-#     rng.shuffle(permuted_clauses)
-
-#     permuted_sampling_set = [mp[v] for v in sampling_set]
-#     permuted_decode = {mp[v]: v for v in sampling_set}
-
-#     return permuted_clauses, permuted_sampling_set, permuted_decode
-
 def permute_problem(clauses, rng, sampling_set):
     old_vars = sampling_set[:]
     new_vars = sampling_set[:]
@@ -1079,34 +1051,6 @@ def reverse_bit_blasting_simp(variable_values, num_samples: int, num_vars: int, 
         for s in range(num_samples)
     ]
 
-# def decode_raw_samples_to_solver_samples(compiled_problem, raw_samples, num_samples):
-#     arr = np.array([[int(x >= 0) for x in sample] for sample in raw_samples], dtype=np.int_)
-
-#     if arr.ndim != 2:
-#         raise RuntimeError(f"Unexpected sample shape: {arr.shape}")
-#     if arr.shape[1] != compiled_problem["num_blasted_vars"]:
-#         raise RuntimeError(
-#             f"Number of variables mismatch: got {arr.shape[1]}, "
-#             f"expected {compiled_problem['num_blasted_vars']}"
-#         )
-#     if arr.shape[0] < num_samples:
-#         raise RuntimeError(
-#             f"Returned fewer samples than requested: {arr.shape[0]} < {num_samples}"
-#         )
-
-#     arr = arr[:num_samples]
-#     variable_values = {
-#         name: arr[:, i]
-#         for i, name in enumerate(compiled_problem["precomputed_blasted_names"])
-#     }
-
-#     return reverse_bit_blasting_simp(
-#         variable_values,
-#         num_samples=num_samples,
-#         num_vars=compiled_problem["num_vars"],
-#         num_bits=compiled_problem["num_bits"],
-    # )
-
 def decode_raw_samples_to_solver_samples(compiled_problem, raw_samples, num_samples):
     arr = np.array([[int(x >= 0) for x in sample] for sample in raw_samples], dtype=np.int_)
 
@@ -1137,29 +1081,6 @@ def decode_raw_samples_to_solver_samples(compiled_problem, raw_samples, num_samp
         num_bits=compiled_problem["num_bits"],
     )
 
-
-# def compile_base_problem(z3_problem: Goal,
-#                          num_vars: int,
-#                          num_bits: int,
-#                          sanity_check_problem: bool = True):
-#     if num_bits <= 0:
-#         raise RuntimeError("num_bits must be positive")
-#     if sanity_check_problem and __check_goal(z3_problem) == unsat:
-#         raise RuntimeError("The problem you input is UNSAT")
-
-#     dimacs_format, num_blasted_vars, variables_number = convert_to_cnf_and_dimacs_simp(z3_problem)
-#     clauses = [[int(x) for x in row[:-1]] for row in dimacs_format[1:]]
-#     sampling_set = sorted({abs(lit) for clause in clauses for lit in clause})
-
-#     return {
-#         "num_blasted_vars": num_blasted_vars,
-#         "bit_map": extract_bitvec_dimacs_map(variables_number, num_vars, num_bits),
-#         "base_clauses": clauses,
-#         "num_vars": num_vars,
-#         "num_bits": num_bits,
-#         "precomputed_blasted_names": [str(variables_number[i + 1]) for i in range(num_blasted_vars)],
-#         "sampling_set": sampling_set,
-#     }
 
 def compile_base_problem(z3_problem: Goal,
                          num_vars: int,
@@ -1406,54 +1327,6 @@ def incremental_pyunigen_pipeline(
 
     return {"trace": trace, "elapsed_time_per_sample": elapsed_time_per_sample}
 
-# def incremental_cmsgen_pipeline(
-#     compiled,
-#     chosen_sample,
-#     trace,
-#     elapsed_time_per_sample,
-#     start_idx,
-#     D,
-#     num_samples,
-#     parallel_samples,
-#     bit_vars_are_lsb_first,
-#     rng,
-#     restart_every=100,
-#     print_progress=True,
-# ):
-#     solver, next_free_var = build_base_cmsgen_solver(compiled["base_clauses"], rng=rng)
-
-#     for i in range(start_idx, num_samples):
-#         if print_progress and i % 10 == 0:
-#             print(f"sample {i}")
-
-#         if i > start_idx and restart_every and i % restart_every == 0:
-#             if print_progress:
-#                 print(f"Restarting CMSGen solver at sample {i}")
-#             solver, next_free_var = build_base_cmsgen_solver(compiled["base_clauses"], rng=rng)
-
-#         extra_clauses = [] if i == 0 else encode_window_clauses_from_values(
-#             current_values=extract_current_values_from_solver_sample(
-#                 chosen_sample, compiled["num_vars"]
-#             ),
-#             bit_map=compiled["bit_map"],
-#             num_vars=compiled["num_vars"],
-#             num_bits=compiled["num_bits"],
-#             D=D,
-#             bit_vars_are_lsb_first=bit_vars_are_lsb_first,
-#         )
-
-#         solver_samples, elapsed, next_free_var = sample_cached_problem_pycmsgen(
-#             compiled_problem=compiled,
-#             solver=solver,
-#             next_free_var=next_free_var,
-#             extra_clauses=extra_clauses,
-#             num_samples=parallel_samples,
-#         )
-#         chosen_sample = solver_samples[rng.randrange(len(solver_samples))]
-#         trace.append(chosen_sample)
-#         elapsed_time_per_sample.append(elapsed)
-
-#     return {"trace": trace, "elapsed_time_per_sample": elapsed_time_per_sample}
 
 def incremental_cmsgen_pipeline(
     compiled,
